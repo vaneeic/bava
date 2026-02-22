@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Bava">
+  <meta name="theme-color" content="#0a0a0a">
+  <meta name="description" content="Live ondertiteling voor Nederlands — speciaal voor dove en slechthorende gebruikers">
+  <title>Bava — Live Ondertiteling</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body data-theme="dark">
+
+  <!-- ========== SPLASH / ONBOARDING ========== -->
+  <div id="splash" class="splash" role="dialog" aria-label="Welkom">
+    <div class="splash-content">
+      <div class="splash-icon">👂</div>
+      <h1>Bava</h1>
+      <p>Live ondertiteling in het Nederlands</p>
+      <button id="btn-start" class="btn btn-primary btn-large" aria-label="Start de app">
+        Beginnen
+      </button>
+    </div>
+  </div>
+
+  <!-- ========== MAIN APP ========== -->
+  <div id="app" class="app hidden" role="main">
+    
+    <!-- Top Bar -->
+    <header class="topbar" role="banner">
+      <div class="topbar-left">
+        <button id="btn-menu" class="btn-icon" aria-label="Menu openen" title="Menu">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
+        <h2 class="topbar-title">Bava</h2>
+      </div>
+      <div class="topbar-center">
+        <div id="mode-indicator" class="mode-indicator" role="status">
+          <span id="mode-label">Gesprek</span>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div id="status-dot" class="status-dot" aria-label="Status: gestopt" title="Niet actief"></div>
+      </div>
+    </header>
+
+    <!-- Mode Tabs -->
+    <nav class="mode-tabs" role="tablist" aria-label="Modus kiezen">
+      <button class="tab active" role="tab" aria-selected="true" data-mode="conversation" id="tab-conversation">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span>Gesprek</span>
+      </button>
+      <button class="tab" role="tab" aria-selected="false" data-mode="tv" id="tab-tv">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+        <span>TV</span>
+      </button>
+      <button class="tab" role="tab" aria-selected="false" data-mode="history" id="tab-history">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+        <span>Geschiedenis</span>
+      </button>
+    </nav>
+
+    <!-- ===== CONVERSATION MODE ===== -->
+    <section id="view-conversation" class="view active" role="tabpanel" aria-labelledby="tab-conversation">
+      <div id="captions-container" class="captions-container" role="log" aria-live="polite" aria-label="Ondertiteling">
+        <div id="captions-list" class="captions-list">
+          <!-- Captions will be inserted here -->
+        </div>
+        <div id="caption-live" class="caption-live" aria-live="assertive">
+          <span id="live-text" class="live-text"></span>
+          <span class="cursor-blink">|</span>
+        </div>
+        <div id="empty-state" class="empty-state">
+          <div class="empty-icon">🎙️</div>
+          <p>Druk op de microfoon om te beginnen</p>
+          <p class="empty-hint">Spreek duidelijk in het Nederlands</p>
+        </div>
+      </div>
+
+      <!-- Mic Button -->
+      <div class="mic-area">
+        <div id="mic-ring" class="mic-ring">
+          <button id="btn-mic" class="btn-mic" aria-label="Microfoon aan/uit" title="Start luisteren">
+            <svg id="mic-icon" width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+            </svg>
+            <svg id="mic-icon-off" width="32" height="32" viewBox="0 0 24 24" fill="currentColor" class="hidden">
+              <path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-4.86H5.3c0 3.41 2.72 6.23 6.2 6.72V21h1v-3.04c.91-.13 1.77-.45 2.54-.9l4.69 4.69L21 20.73 4.27 3z"/>
+            </svg>
+          </button>
+        </div>
+        <div id="volume-meter" class="volume-meter" role="meter" aria-label="Geluidsniveau" aria-valuemin="0" aria-valuemax="100">
+          <div id="volume-bar" class="volume-bar"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== TV MODE ===== -->
+    <section id="view-tv" class="view" role="tabpanel" aria-labelledby="tab-tv">
+      <div class="tv-captions-container">
+        <div id="tv-captions" class="tv-captions" role="log" aria-live="polite" aria-label="TV ondertiteling">
+          <div id="tv-caption-line-1" class="tv-caption-line"></div>
+          <div id="tv-caption-line-2" class="tv-caption-line active"></div>
+        </div>
+      </div>
+      <div id="tv-empty-state" class="empty-state tv-empty">
+        <div class="empty-icon">📺</div>
+        <p>TV modus</p>
+        <p class="empty-hint">Plaats je telefoon dicht bij de TV<br>en druk op de microfoon</p>
+      </div>
+      <div class="mic-area">
+        <div id="tv-mic-ring" class="mic-ring">
+          <button id="btn-tv-mic" class="btn-mic" aria-label="TV microfoon aan/uit" title="Start TV luisteren">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== HISTORY VIEW ===== -->
+    <section id="view-history" class="view" role="tabpanel" aria-labelledby="tab-history">
+      <div class="history-container">
+        <div class="history-header">
+          <h3>Opgeslagen Transcripties</h3>
+          <button id="btn-clear-history" class="btn btn-small btn-danger" aria-label="Geschiedenis wissen">
+            Alles wissen
+          </button>
+        </div>
+        <div id="history-list" class="history-list">
+          <div id="history-empty" class="empty-state">
+            <div class="empty-icon">📝</div>
+            <p>Nog geen opgeslagen transcripties</p>
+            <p class="empty-hint">Start een gesprek en je transcripties worden automatisch opgeslagen</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ========== SIDE MENU / SETTINGS ========== -->
+  <div id="menu-overlay" class="menu-overlay hidden" role="dialog" aria-label="Instellingen">
+    <div class="menu-panel">
+      <div class="menu-header">
+        <h3>Instellingen</h3>
+        <button id="btn-close-menu" class="btn-icon" aria-label="Menu sluiten">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="menu-body">
+        <!-- Theme -->
+        <div class="setting-group">
+          <label class="setting-label">Thema</label>
+          <div class="setting-options" role="radiogroup" aria-label="Thema kiezen">
+            <button class="chip active" data-theme="dark" role="radio" aria-checked="true">🌙 Donker</button>
+            <button class="chip" data-theme="light" role="radio" aria-checked="false">☀️ Licht</button>
+            <button class="chip" data-theme="high-contrast" role="radio" aria-checked="false">🔲 Hoog contrast</button>
+          </div>
+        </div>
+
+        <!-- Font Size -->
+        <div class="setting-group">
+          <label class="setting-label" for="font-slider">Lettergrootte: <span id="font-size-value">24</span>px</label>
+          <input type="range" id="font-slider" class="slider" min="16" max="64" value="24" step="2" aria-label="Lettergrootte aanpassen">
+        </div>
+
+        <!-- Auto-save -->
+        <div class="setting-group">
+          <label class="setting-label">
+            <span>Automatisch opslaan</span>
+            <label class="switch" aria-label="Automatisch opslaan aan/uit">
+              <input type="checkbox" id="toggle-autosave" checked>
+              <span class="switch-slider"></span>
+            </label>
+          </label>
+        </div>
+
+        <!-- Haptic feedback -->
+        <div class="setting-group">
+          <label class="setting-label">
+            <span>Trillen bij geluid</span>
+            <label class="switch" aria-label="Trillen bij geluid aan/uit">
+              <input type="checkbox" id="toggle-haptic" checked>
+              <span class="switch-slider"></span>
+            </label>
+          </label>
+        </div>
+
+        <!-- Language (always Dutch but show it) -->
+        <div class="setting-group">
+          <label class="setting-label">Taal</label>
+          <div class="setting-value">🇳🇱 Nederlands</div>
+        </div>
+      </div>
+
+      <div class="menu-footer">
+        <p class="version">Bava v1.0 — Gemaakt met ❤️</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== NOTIFICATION TOAST ========== -->
+  <div id="toast" class="toast hidden" role="alert" aria-live="assertive"></div>
+
+  <script src="app.js"></script>
+  <script>
+    // Register Service Worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>
