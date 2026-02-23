@@ -16,7 +16,7 @@
   const AUTO_RESTART_DELAY = 300;
   const SILENCE_TIMEOUT = 60000; // 1 minute of silence before auto-stop
   const SPEAKER_ANALYSIS_THRESHOLD = 2000; // 2s silence = trigger voice analysis (not speaker change)
-  const SPEAKER_DIFFER_THRESHOLD = 0.35;   // similarity below this = confirmed different speaker
+  const SPEAKER_DIFFER_DEFAULT = 0.15;     // default: very strict (only switch on very different voice)
   const VOICE_SAMPLE_INTERVAL = 80;        // ms between voice feature samples
   const VOICE_PROFILE_MIN_SAMPLES = 5;     // minimum samples before profile is reliable
 
@@ -67,6 +67,7 @@
       fontSize: 24,
       autoSave: true,
       haptic: true,
+      speakerSensitivity: 15, // 0-100, lower = stricter (less speaker switches)
     },
   };
 
@@ -116,6 +117,8 @@
     // Settings
     fontSlider: $('#font-slider'),
     fontSizeValue: $('#font-size-value'),
+    sensitivitySlider: $('#sensitivity-slider'),
+    sensitivityValue: $('#sensitivity-value'),
     toggleAutosave: $('#toggle-autosave'),
     toggleHaptic: $('#toggle-haptic'),
     themeChips: $$('[data-theme]'),
@@ -176,6 +179,12 @@
       state.settings.fontSize = parseInt(e.target.value);
       els.fontSizeValue.textContent = e.target.value;
       applyFontSize();
+      saveSettings();
+    });
+
+    els.sensitivitySlider.addEventListener('input', (e) => {
+      state.settings.speakerSensitivity = parseInt(e.target.value);
+      els.sensitivityValue.textContent = getSensitivityLabel(state.settings.speakerSensitivity);
       saveSettings();
     });
 
@@ -496,8 +505,9 @@
         // First: check similarity to CURRENT speaker
         const currentProfile = state.speakerProfiles[state.currentSpeakerId];
         const currentSimilarity = currentProfile ? compareFingerprints(newFingerprint, currentProfile) : 1;
+        const differThreshold = getSpeakerDifferThreshold();
 
-        if (currentSimilarity >= SPEAKER_DIFFER_THRESHOLD) {
+        if (currentSimilarity >= differThreshold) {
           // Voice is similar enough to current speaker — stay with them
           // (this is the default / safe path)
           state._pendingAnalysis = false;
@@ -518,7 +528,7 @@
             }
           }
 
-          if (bestMatch >= 0 && bestScore >= SPEAKER_DIFFER_THRESHOLD) {
+          if (bestMatch >= 0 && bestScore >= getSpeakerDifferThreshold()) {
             // Matches a previously known speaker — switch to them
             state.currentSpeakerId = bestMatch;
           } else {
@@ -1052,6 +1062,8 @@
     // Sync UI controls
     els.fontSlider.value = state.settings.fontSize;
     els.fontSizeValue.textContent = state.settings.fontSize;
+    els.sensitivitySlider.value = state.settings.speakerSensitivity;
+    els.sensitivityValue.textContent = getSensitivityLabel(state.settings.speakerSensitivity);
     els.toggleAutosave.checked = state.settings.autoSave;
     els.toggleHaptic.checked = state.settings.haptic;
 
@@ -1068,6 +1080,25 @@
 
   function applyFontSize() {
     document.documentElement.style.setProperty('--caption-font-size', state.settings.fontSize + 'px');
+  }
+
+  /**
+   * Convert the 0-100 sensitivity slider to the internal differ threshold.
+   * 0 (strict) = 0.05 (nearly impossible to switch)
+   * 50 = 0.25
+   * 100 (sensitive) = 0.50 (switches easily)
+   */
+  function getSpeakerDifferThreshold() {
+    const s = state.settings.speakerSensitivity / 100; // 0..1
+    return 0.05 + s * 0.45; // maps to 0.05..0.50
+  }
+
+  function getSensitivityLabel(value) {
+    if (value <= 20) return 'Zeer strict';
+    if (value <= 40) return 'Strict';
+    if (value <= 60) return 'Normaal';
+    if (value <= 80) return 'Gevoelig';
+    return 'Zeer gevoelig';
   }
 
   // ==========================================
