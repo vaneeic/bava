@@ -344,6 +344,7 @@ body {
 .caption-bubble {
   background: var(--bg-surface);
   border: 1px solid var(--border);
+  border-left: 4px solid var(--speaker-color, var(--accent));
   border-radius: var(--radius);
   padding: 0.8rem 1rem;
   font-size: var(--caption-font-size);
@@ -351,6 +352,16 @@ body {
   word-wrap: break-word;
   animation: slideUp 0.3s ease;
   position: relative;
+}
+
+.caption-bubble .speaker-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.3rem;
+  opacity: 0.9;
 }
 
 .caption-bubble .timestamp {
@@ -502,6 +513,34 @@ body {
   background: var(--accent);
   border-radius: 2px;
   transition: width 0.1s ease;
+}
+
+/* ---------- Speaker Legend ---------- */
+.speaker-legend {
+  display: flex;
+  align-items: center;
+  padding: 0.4rem 1rem;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.speaker-legend-list {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.speaker-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-left: 3px solid var(--speaker-color, var(--accent));
 }
 
 /* ---------- TV Mode ---------- */
