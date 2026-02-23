@@ -12,6 +12,7 @@
   const LANG = 'nl-NL';
   const STORAGE_KEY = 'bava_transcripts';
   const SETTINGS_KEY = 'bava_settings';
+  const SPEAKERS_KEY = 'bava_speakers'; // saved speaker profiles + names
   const MAX_HISTORY = 50;
   const AUTO_RESTART_DELAY = 300;
   const SILENCE_TIMEOUT = 60000; // 1 minute of silence before auto-stop
@@ -125,6 +126,9 @@
     // Speaker legend
     speakerLegend: $('#speaker-legend'),
     speakerLegendList: $('#speaker-legend-list'),
+    // Saved speakers
+    savedSpeakersList: $('#saved-speakers-list'),
+    btnClearSpeakers: $('#btn-clear-speakers'),
     // Toast
     toast: $('#toast'),
   };
@@ -214,6 +218,25 @@
 
     // History
     els.btnClearHistory.addEventListener('click', clearHistory);
+
+    // Saved speakers
+    if (els.btnClearSpeakers) {
+      els.btnClearSpeakers.addEventListener('click', () => {
+        if (confirm('Alle opgeslagen sprekerprofielen wissen?')) {
+          localStorage.removeItem(SPEAKERS_KEY);
+          state.speakerProfiles = {};
+          state.speakerNames = {};
+          state.speakerColorMap = {};
+          state.nextColorIndex = 0;
+          state.speakerCount = 1;
+          state.currentSpeakerId = 0;
+          updateSpeakerLegend();
+          renderSavedSpeakers();
+          showToast('🗑️ Alle sprekerprofielen gewist');
+        }
+      });
+    }
+    renderSavedSpeakers();
 
     // Prevent screen from sleeping using Wake Lock API
     requestWakeLock();
@@ -469,6 +492,11 @@
     existing.pitchVar = existing.pitchVar * (1 - alpha) + fingerprint.pitchVar * alpha;
     existing.centroidVar = existing.centroidVar * (1 - alpha) + fingerprint.centroidVar * alpha;
     existing.sampleCount++;
+
+    // Auto-save profiles periodically (every 10 samples)
+    if (existing.sampleCount % 10 === 0) {
+      saveSpeakerProfiles();
+    }
   }
 
   /**
@@ -572,6 +600,8 @@
         el.textContent = newName.trim();
       });
       updateSpeakerLegend();
+      saveSpeakerProfiles();
+      renderSavedSpeakers();
       showToast(`✏️ ${currentName} → ${newName.trim()}`);
     }
   }
@@ -603,17 +633,113 @@
   }
 
   function resetSpeakerState() {
-    state.currentSpeakerId = 0;
-    state.speakerColorMap = {};
-    state.nextColorIndex = 0;
+    // Load saved profiles instead of clearing everything
+    const saved = loadSpeakerProfiles();
+    if (saved && Object.keys(saved.profiles).length > 0) {
+      state.speakerProfiles = saved.profiles;
+      state.speakerNames = saved.names;
+      state.speakerColorMap = saved.colorMap || {};
+      state.nextColorIndex = saved.nextColorIndex || Object.keys(saved.colorMap || {}).length;
+      state.speakerCount = saved.speakerCount || Object.keys(saved.profiles).length;
+      state.currentSpeakerId = 0; // start matching from first speech
+    } else {
+      state.speakerProfiles = {};
+      state.speakerNames = {};
+      state.speakerColorMap = {};
+      state.nextColorIndex = 0;
+      state.speakerCount = 1;
+      state.currentSpeakerId = 0;
+    }
     state.lastSpeechTime = null;
-    state.speakerCount = 1; // Start with speaker 0
-    state.speakerProfiles = {};
     state.voiceSampleBuffer = [];
     state._pendingAnalysis = false;
-    state.speakerNames = {};
     stopVoiceSampling();
     updateSpeakerLegend();
+  }
+
+  /**
+   * Save speaker profiles, names, and color mapping to localStorage
+   * so they can be reused across sessions.
+   */
+  function saveSpeakerProfiles() {
+    try {
+      const data = {
+        profiles: state.speakerProfiles,
+        names: state.speakerNames,
+        colorMap: state.speakerColorMap,
+        nextColorIndex: state.nextColorIndex,
+        speakerCount: state.speakerCount,
+        savedAt: Date.now()
+      };
+      localStorage.setItem(SPEAKERS_KEY, JSON.stringify(data));
+    } catch (e) {
+      console.warn('Could not save speaker profiles:', e);
+    }
+  }
+
+  /**
+   * Load saved speaker profiles from localStorage.
+   * Returns null if nothing saved or data is invalid.
+   */
+  function loadSpeakerProfiles() {
+    try {
+      const raw = localStorage.getItem(SPEAKERS_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (!data || !data.profiles) return null;
+      return data;
+    } catch (e) {
+      console.warn('Could not load speaker profiles:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Render saved speakers list in the settings panel.
+   */
+  function renderSavedSpeakers() {
+    if (!els.savedSpeakersList) return;
+
+    const saved = loadSpeakerProfiles();
+    if (!saved || Object.keys(saved.profiles).length === 0) {
+      els.savedSpeakersList.innerHTML = '<p class="setting-hint">Nog geen opgeslagen sprekers. Start een gesprek om stemprofielen op te bouwen.</p>';
+      return;
+    }
+
+    els.savedSpeakersList.innerHTML = '';
+    for (const [id, profile] of Object.entries(saved.profiles)) {
+      const speakerId = parseInt(id);
+      const colorIdx = saved.colorMap[id] !== undefined ? saved.colorMap[id] : 0;
+      const color = SPEAKER_COLORS[colorIdx % SPEAKER_COLORS.length];
+      const name = saved.names[id] || `Spreker ${speakerId + 1}`;
+      const samples = profile.sampleCount || 0;
+
+      const item = document.createElement('div');
+      item.className = 'saved-speaker-item';
+      item.innerHTML = `
+        <span class="saved-speaker-color" style="background: ${color.hex}"></span>
+        <span class="saved-speaker-name">${name}</span>
+        <span class="saved-speaker-samples">${samples} samples</span>
+        <button class="btn-icon saved-speaker-delete" aria-label="${name} verwijderen" title="Verwijderen">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      `;
+
+      // Delete individual speaker
+      item.querySelector('.saved-speaker-delete').addEventListener('click', () => {
+        delete state.speakerProfiles[speakerId];
+        delete state.speakerNames[speakerId];
+        delete state.speakerColorMap[speakerId];
+        saveSpeakerProfiles();
+        renderSavedSpeakers();
+        updateSpeakerLegend();
+        showToast(`🗑️ ${name} verwijderd`);
+      });
+
+      els.savedSpeakersList.appendChild(item);
+    }
   }
 
   function handleResults(event) {
@@ -752,6 +878,13 @@
 
     updateMicUI(false);
     hideLiveText();
+
+    // Save final speaker profile state
+    const currentFingerprint = buildFingerprint(state.voiceSampleBuffer);
+    updateSpeakerProfile(state.currentSpeakerId, currentFingerprint);
+    saveSpeakerProfiles();
+    renderSavedSpeakers();
+
     showToast('⏹️ Gestopt');
     finalizeSession();
   }

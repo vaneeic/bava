@@ -786,6 +786,53 @@ body {
   margin-top: 0.2rem;
 }
 
+/* Saved Speakers List */
+.saved-speakers-list {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.saved-speaker-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.saved-speaker-item:last-child {
+  border-bottom: none;
+}
+
+.saved-speaker-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.saved-speaker-name {
+  flex: 1;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.saved-speaker-samples {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.saved-speaker-delete {
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: opacity var(--transition);
+}
+
+.saved-speaker-delete:hover {
+  opacity: 1;
+}
+
 .chip {
   padding: 0.5rem 0.8rem;
   border-radius: 999px;
