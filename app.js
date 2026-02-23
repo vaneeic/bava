@@ -15,10 +15,10 @@
   const MAX_HISTORY = 50;
   const AUTO_RESTART_DELAY = 300;
   const SILENCE_TIMEOUT = 60000; // 1 minute of silence before auto-stop
-  const SPEAKER_CHANGE_THRESHOLD = 1500; // 1.5s silence = potential speaker change
-  const VOICE_MATCH_THRESHOLD = 0.65;     // similarity score to match existing speaker
-  const VOICE_SAMPLE_INTERVAL = 80;       // ms between voice feature samples
-  const VOICE_PROFILE_MIN_SAMPLES = 3;    // minimum samples before profile is reliable
+  const SPEAKER_ANALYSIS_THRESHOLD = 2000; // 2s silence = trigger voice analysis (not speaker change)
+  const SPEAKER_DIFFER_THRESHOLD = 0.35;   // similarity below this = confirmed different speaker
+  const VOICE_SAMPLE_INTERVAL = 80;        // ms between voice feature samples
+  const VOICE_PROFILE_MIN_SAMPLES = 5;     // minimum samples before profile is reliable
 
   // Accessible color palette — distinguishable for colorblind users
   // Uses Wong's colorblind-safe palette + extras
@@ -60,6 +60,8 @@
     voiceSampleBuffer: [],    // recent voice feature samples for current segment
     voiceSampleTimer: null,   // interval for collecting voice samples
     pitchAnalyser: null,      // dedicated analyser for pitch (larger fftSize)
+    // Speaker names
+    speakerNames: {},         // speakerId -> custom name
     settings: {
       theme: 'dark',
       fontSize: 24,
@@ -461,52 +463,72 @@
   }
 
   /**
-   * Detect speaker change using voice fingerprinting + silence gap.
-   * Returns the speaker ID for the current segment.
+   * Detect speaker change using voice fingerprinting.
+   * 
+   * Philosophy: stay with the current speaker unless we have STRONG evidence
+   * that the voice is different. It's better to under-detect than over-detect.
+   * 
+   * - Silence gap only triggers a voice analysis, never a speaker change by itself.
+   * - Only switch when the new voice is provably different from the current speaker.
+   * - If the voice matches a known speaker, switch to that one.
+   * - If the voice is different from current but doesn't match anyone, create new speaker.
+   * - If uncertain: stay with current speaker.
    */
   function detectSpeakerChange() {
     const now = Date.now();
     const silenceGap = state.lastSpeechTime ? (now - state.lastSpeechTime) : 0;
 
-    if (silenceGap > SPEAKER_CHANGE_THRESHOLD) {
-      // Silence detected — finalize current speaker's profile and try to match new voice
+    if (silenceGap > SPEAKER_ANALYSIS_THRESHOLD) {
+      // Silence detected — save current speaker's profile from collected samples
       const currentFingerprint = buildFingerprint(state.voiceSampleBuffer);
       updateSpeakerProfile(state.currentSpeakerId, currentFingerprint);
 
-      // Reset sample buffer and start fresh sampling
+      // Start fresh sampling for the next speech segment
       startVoiceSampling();
-
-      // After a brief delay, try to match the new voice to an existing speaker
-      // For now, collect a few samples first then match on next call
-      state._pendingMatch = true;
+      state._pendingAnalysis = true;
     }
 
-    // If we have a pending match and enough new samples, try to identify
-    if (state._pendingMatch && state.voiceSampleBuffer.length >= VOICE_PROFILE_MIN_SAMPLES) {
+    // Once we have enough new samples after a silence gap, analyse the voice
+    if (state._pendingAnalysis && state.voiceSampleBuffer.length >= VOICE_PROFILE_MIN_SAMPLES) {
       const newFingerprint = buildFingerprint(state.voiceSampleBuffer);
+
       if (newFingerprint) {
-        let bestMatch = -1;
-        let bestScore = 0;
+        // First: check similarity to CURRENT speaker
+        const currentProfile = state.speakerProfiles[state.currentSpeakerId];
+        const currentSimilarity = currentProfile ? compareFingerprints(newFingerprint, currentProfile) : 1;
 
-        // Compare against all known speaker profiles
-        for (const [id, profile] of Object.entries(state.speakerProfiles)) {
-          const score = compareFingerprints(newFingerprint, profile);
-          if (score > bestScore && score >= VOICE_MATCH_THRESHOLD) {
-            bestScore = score;
-            bestMatch = parseInt(id);
-          }
-        }
-
-        if (bestMatch >= 0) {
-          // Recognized existing speaker
-          state.currentSpeakerId = bestMatch;
+        if (currentSimilarity >= SPEAKER_DIFFER_THRESHOLD) {
+          // Voice is similar enough to current speaker — stay with them
+          // (this is the default / safe path)
+          state._pendingAnalysis = false;
         } else {
-          // New speaker
-          state.currentSpeakerId = state.speakerCount;
-          state.speakerCount++;
-        }
+          // Voice is clearly DIFFERENT from current speaker.
+          // Now check if it matches any OTHER known speaker.
+          let bestMatch = -1;
+          let bestScore = 0;
 
-        state._pendingMatch = false;
+          for (const [id, profile] of Object.entries(state.speakerProfiles)) {
+            const speakerId = parseInt(id);
+            if (speakerId === state.currentSpeakerId) continue; // skip current
+
+            const score = compareFingerprints(newFingerprint, profile);
+            if (score > bestScore) {
+              bestScore = score;
+              bestMatch = speakerId;
+            }
+          }
+
+          if (bestMatch >= 0 && bestScore >= SPEAKER_DIFFER_THRESHOLD) {
+            // Matches a previously known speaker — switch to them
+            state.currentSpeakerId = bestMatch;
+          } else {
+            // Doesn't match anyone — this is genuinely a new speaker
+            state.currentSpeakerId = state.speakerCount;
+            state.speakerCount++;
+          }
+
+          state._pendingAnalysis = false;
+        }
       }
     }
 
@@ -524,7 +546,24 @@
   }
 
   function getSpeakerLabel(speakerId) {
-    return `Spreker ${speakerId + 1}`;
+    return state.speakerNames[speakerId] || `Spreker ${speakerId + 1}`;
+  }
+
+  /**
+   * Prompt user to rename a speaker. Updates all existing labels in the DOM.
+   */
+  function renameSpeaker(speakerId) {
+    const currentName = getSpeakerLabel(speakerId);
+    const newName = prompt(`Naam voor ${currentName}:`, currentName);
+    if (newName && newName.trim()) {
+      state.speakerNames[speakerId] = newName.trim();
+      // Update all speaker labels in existing bubbles
+      document.querySelectorAll(`.speaker-label[data-speaker-id="${speakerId}"]`).forEach(el => {
+        el.textContent = newName.trim();
+      });
+      updateSpeakerLegend();
+      showToast(`✏️ ${currentName} → ${newName.trim()}`);
+    }
   }
 
   function updateSpeakerLegend() {
@@ -541,10 +580,14 @@
 
     entries.forEach(([id, colorIdx]) => {
       const color = SPEAKER_COLORS[colorIdx];
+      const speakerId = parseInt(id);
       const chip = document.createElement('span');
       chip.className = 'speaker-chip';
       chip.style.setProperty('--speaker-color', color.hex);
-      chip.textContent = getSpeakerLabel(parseInt(id));
+      chip.textContent = getSpeakerLabel(speakerId);
+      chip.title = 'Klik om naam te wijzigen';
+      chip.style.cursor = 'pointer';
+      chip.addEventListener('click', () => renameSpeaker(speakerId));
       els.speakerLegendList.appendChild(chip);
     });
   }
@@ -557,7 +600,8 @@
     state.speakerCount = 1; // Start with speaker 0
     state.speakerProfiles = {};
     state.voiceSampleBuffer = [];
-    state._pendingMatch = false;
+    state._pendingAnalysis = false;
+    state.speakerNames = {};
     stopVoiceSampling();
     updateSpeakerLegend();
   }
@@ -804,11 +848,17 @@
         bubble.classList.add('low-confidence');
       }
 
-      // Speaker label
+      // Speaker label (clickable for rename)
       const speakerEl = document.createElement('span');
       speakerEl.className = 'speaker-label';
       speakerEl.style.color = speakerColor.hex;
       speakerEl.textContent = getSpeakerLabel(speakerId);
+      speakerEl.dataset.speakerId = speakerId;
+      speakerEl.title = 'Klik om naam te wijzigen';
+      speakerEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        renameSpeaker(speakerId);
+      });
 
       const textEl = document.createElement('span');
       textEl.textContent = text;
@@ -816,6 +866,7 @@
       const confEl = document.createElement('span');
       confEl.className = 'confidence';
       confEl.textContent = Math.round(confidence * 100) + '%';
+      confEl.title = 'Nauwkeurigheid spraakherkenning';
 
       const timeEl = document.createElement('span');
       timeEl.className = 'timestamp';
