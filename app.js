@@ -15,7 +15,10 @@
   const MAX_HISTORY = 50;
   const AUTO_RESTART_DELAY = 300;
   const SILENCE_TIMEOUT = 60000; // 1 minute of silence before auto-stop
-  const SPEAKER_CHANGE_THRESHOLD = 2000; // 2 seconds of silence = new speaker
+  const SPEAKER_CHANGE_THRESHOLD = 1500; // 1.5s silence = potential speaker change
+  const VOICE_MATCH_THRESHOLD = 0.65;     // similarity score to match existing speaker
+  const VOICE_SAMPLE_INTERVAL = 80;       // ms between voice feature samples
+  const VOICE_PROFILE_MIN_SAMPLES = 3;    // minimum samples before profile is reliable
 
   // Accessible color palette — distinguishable for colorblind users
   // Uses Wong's colorblind-safe palette + extras
@@ -48,10 +51,15 @@
     volumeAnimFrame: null,
     // Speaker tracking
     currentSpeakerId: 0,
-    speakerColorMap: {},    // speakerId -> colorIndex
+    speakerColorMap: {},      // speakerId -> colorIndex
     nextColorIndex: 0,
-    lastSpeechTime: null,   // timestamp of last speech event
+    lastSpeechTime: null,     // timestamp of last speech event
     speakerCount: 0,
+    // Voice fingerprinting
+    speakerProfiles: {},      // speakerId -> { pitchAvg, pitchVar, centroidAvg, centroidVar, sampleCount }
+    voiceSampleBuffer: [],    // recent voice feature samples for current segment
+    voiceSampleTimer: null,   // interval for collecting voice samples
+    pitchAnalyser: null,      // dedicated analyser for pitch (larger fftSize)
     settings: {
       theme: 'dark',
       fontSize: 24,
@@ -275,15 +283,233 @@
   }
 
   // ==========================================
-  // SPEAKER DETECTION
+  // SPEAKER DETECTION — Voice Fingerprinting
   // ==========================================
+
+  /**
+   * Estimate fundamental frequency (pitch) via autocorrelation.
+   * Returns pitch in Hz, or 0 if no clear pitch detected.
+   */
+  function estimatePitch() {
+    if (!state.pitchAnalyser || !state.audioContext) return 0;
+
+    const bufferLength = state.pitchAnalyser.fftSize;
+    const buffer = new Float32Array(bufferLength);
+    state.pitchAnalyser.getFloatTimeDomainData(buffer);
+
+    // Check if there's enough signal (not silence)
+    let rms = 0;
+    for (let i = 0; i < bufferLength; i++) {
+      rms += buffer[i] * buffer[i];
+    }
+    rms = Math.sqrt(rms / bufferLength);
+    if (rms < 0.01) return 0; // too quiet
+
+    // Autocorrelation-based pitch detection
+    const sampleRate = state.audioContext.sampleRate;
+    const minPeriod = Math.floor(sampleRate / 500); // max 500 Hz
+    const maxPeriod = Math.floor(sampleRate / 60);   // min 60 Hz
+
+    let bestCorrelation = 0;
+    let bestPeriod = 0;
+
+    for (let period = minPeriod; period <= maxPeriod && period < bufferLength / 2; period++) {
+      let correlation = 0;
+      let norm1 = 0;
+      let norm2 = 0;
+      const len = bufferLength - period;
+
+      for (let i = 0; i < len; i++) {
+        correlation += buffer[i] * buffer[i + period];
+        norm1 += buffer[i] * buffer[i];
+        norm2 += buffer[i + period] * buffer[i + period];
+      }
+
+      // Normalized cross-correlation
+      const normFactor = Math.sqrt(norm1 * norm2);
+      if (normFactor > 0) {
+        correlation /= normFactor;
+      }
+
+      if (correlation > bestCorrelation && correlation > 0.5) {
+        bestCorrelation = correlation;
+        bestPeriod = period;
+      }
+    }
+
+    return bestPeriod > 0 ? sampleRate / bestPeriod : 0;
+  }
+
+  /**
+   * Calculate spectral centroid — the "brightness" of the voice.
+   * Returns centroid frequency in Hz.
+   */
+  function calculateSpectralCentroid() {
+    if (!state.analyser || !state.audioContext) return 0;
+
+    const freqData = new Uint8Array(state.analyser.frequencyBinCount);
+    state.analyser.getByteFrequencyData(freqData);
+
+    let weightedSum = 0;
+    let totalWeight = 0;
+    const nyquist = state.audioContext.sampleRate / 2;
+    const binWidth = nyquist / freqData.length;
+
+    for (let i = 0; i < freqData.length; i++) {
+      const magnitude = freqData[i];
+      const frequency = i * binWidth;
+      weightedSum += magnitude * frequency;
+      totalWeight += magnitude;
+    }
+
+    return totalWeight > 0 ? weightedSum / totalWeight : 0;
+  }
+
+  /**
+   * Collect a single voice feature sample (pitch + spectral centroid).
+   * Called at regular intervals during speech.
+   */
+  function collectVoiceSample() {
+    const pitch = estimatePitch();
+    const centroid = calculateSpectralCentroid();
+
+    // Only store if there's meaningful audio
+    if (pitch > 0 && centroid > 0) {
+      state.voiceSampleBuffer.push({ pitch, centroid });
+    }
+  }
+
+  /**
+   * Start collecting voice samples at regular intervals.
+   */
+  function startVoiceSampling() {
+    stopVoiceSampling();
+    state.voiceSampleBuffer = [];
+    state.voiceSampleTimer = setInterval(collectVoiceSample, VOICE_SAMPLE_INTERVAL);
+  }
+
+  /**
+   * Stop collecting voice samples.
+   */
+  function stopVoiceSampling() {
+    if (state.voiceSampleTimer) {
+      clearInterval(state.voiceSampleTimer);
+      state.voiceSampleTimer = null;
+    }
+  }
+
+  /**
+   * Build a voice fingerprint from collected samples.
+   * Returns { pitchAvg, pitchVar, centroidAvg, centroidVar } or null if not enough data.
+   */
+  function buildFingerprint(samples) {
+    if (!samples || samples.length < VOICE_PROFILE_MIN_SAMPLES) return null;
+
+    const pitches = samples.map(s => s.pitch);
+    const centroids = samples.map(s => s.centroid);
+
+    const pitchAvg = pitches.reduce((a, b) => a + b, 0) / pitches.length;
+    const centroidAvg = centroids.reduce((a, b) => a + b, 0) / centroids.length;
+
+    const pitchVar = pitches.reduce((sum, p) => sum + (p - pitchAvg) ** 2, 0) / pitches.length;
+    const centroidVar = centroids.reduce((sum, c) => sum + (c - centroidAvg) ** 2, 0) / centroids.length;
+
+    return { pitchAvg, pitchVar, centroidAvg, centroidVar };
+  }
+
+  /**
+   * Compare two voice fingerprints. Returns similarity score 0..1.
+   * Uses normalized distance on pitch and spectral centroid.
+   */
+  function compareFingerprints(fp1, fp2) {
+    if (!fp1 || !fp2) return 0;
+
+    // Pitch difference — normalize by typical human range (60-500 Hz)
+    const pitchRange = 440;
+    const pitchDiff = Math.abs(fp1.pitchAvg - fp2.pitchAvg) / pitchRange;
+
+    // Spectral centroid difference — normalize by typical range (200-4000 Hz)
+    const centroidRange = 3800;
+    const centroidDiff = Math.abs(fp1.centroidAvg - fp2.centroidAvg) / centroidRange;
+
+    // Weighted combination (pitch is stronger indicator)
+    const distance = (pitchDiff * 0.6) + (centroidDiff * 0.4);
+
+    // Convert distance to similarity (1 = identical, 0 = completely different)
+    return Math.max(0, 1 - distance * 3);
+  }
+
+  /**
+   * Update a speaker profile with new samples (running average).
+   */
+  function updateSpeakerProfile(speakerId, fingerprint) {
+    if (!fingerprint) return;
+
+    const existing = state.speakerProfiles[speakerId];
+    if (!existing) {
+      state.speakerProfiles[speakerId] = { ...fingerprint, sampleCount: 1 };
+      return;
+    }
+
+    // Exponentially weighted moving average (more weight on recent)
+    const alpha = Math.min(0.3, 1 / (existing.sampleCount + 1));
+    existing.pitchAvg = existing.pitchAvg * (1 - alpha) + fingerprint.pitchAvg * alpha;
+    existing.centroidAvg = existing.centroidAvg * (1 - alpha) + fingerprint.centroidAvg * alpha;
+    existing.pitchVar = existing.pitchVar * (1 - alpha) + fingerprint.pitchVar * alpha;
+    existing.centroidVar = existing.centroidVar * (1 - alpha) + fingerprint.centroidVar * alpha;
+    existing.sampleCount++;
+  }
+
+  /**
+   * Detect speaker change using voice fingerprinting + silence gap.
+   * Returns the speaker ID for the current segment.
+   */
   function detectSpeakerChange() {
     const now = Date.now();
-    if (state.lastSpeechTime && (now - state.lastSpeechTime) > SPEAKER_CHANGE_THRESHOLD) {
-      // Silence gap exceeded threshold — likely a new speaker
-      state.currentSpeakerId = state.speakerCount;
-      state.speakerCount++;
+    const silenceGap = state.lastSpeechTime ? (now - state.lastSpeechTime) : 0;
+
+    if (silenceGap > SPEAKER_CHANGE_THRESHOLD) {
+      // Silence detected — finalize current speaker's profile and try to match new voice
+      const currentFingerprint = buildFingerprint(state.voiceSampleBuffer);
+      updateSpeakerProfile(state.currentSpeakerId, currentFingerprint);
+
+      // Reset sample buffer and start fresh sampling
+      startVoiceSampling();
+
+      // After a brief delay, try to match the new voice to an existing speaker
+      // For now, collect a few samples first then match on next call
+      state._pendingMatch = true;
     }
+
+    // If we have a pending match and enough new samples, try to identify
+    if (state._pendingMatch && state.voiceSampleBuffer.length >= VOICE_PROFILE_MIN_SAMPLES) {
+      const newFingerprint = buildFingerprint(state.voiceSampleBuffer);
+      if (newFingerprint) {
+        let bestMatch = -1;
+        let bestScore = 0;
+
+        // Compare against all known speaker profiles
+        for (const [id, profile] of Object.entries(state.speakerProfiles)) {
+          const score = compareFingerprints(newFingerprint, profile);
+          if (score > bestScore && score >= VOICE_MATCH_THRESHOLD) {
+            bestScore = score;
+            bestMatch = parseInt(id);
+          }
+        }
+
+        if (bestMatch >= 0) {
+          // Recognized existing speaker
+          state.currentSpeakerId = bestMatch;
+        } else {
+          // New speaker
+          state.currentSpeakerId = state.speakerCount;
+          state.speakerCount++;
+        }
+
+        state._pendingMatch = false;
+      }
+    }
+
     state.lastSpeechTime = now;
     return state.currentSpeakerId;
   }
@@ -329,6 +555,10 @@
     state.nextColorIndex = 0;
     state.lastSpeechTime = null;
     state.speakerCount = 1; // Start with speaker 0
+    state.speakerProfiles = {};
+    state.voiceSampleBuffer = [];
+    state._pendingMatch = false;
+    stopVoiceSampling();
     updateSpeakerLegend();
   }
 
@@ -488,12 +718,22 @@
   function setupAudioAnalysis() {
     try {
       state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const source = state.audioContext.createMediaStreamSource(state.mediaStream);
+
+      // Analyser for volume meter + spectral centroid
       state.analyser = state.audioContext.createAnalyser();
       state.analyser.fftSize = 256;
       state.analyser.smoothingTimeConstant = 0.8;
-
-      const source = state.audioContext.createMediaStreamSource(state.mediaStream);
       source.connect(state.analyser);
+
+      // Dedicated analyser for pitch detection (needs larger fftSize)
+      state.pitchAnalyser = state.audioContext.createAnalyser();
+      state.pitchAnalyser.fftSize = 2048;
+      state.pitchAnalyser.smoothingTimeConstant = 0.3;
+      source.connect(state.pitchAnalyser);
+
+      // Start voice sampling for speaker fingerprinting
+      startVoiceSampling();
 
       updateVolumeMeter();
     } catch (e) {
@@ -522,12 +762,15 @@
       state.volumeAnimFrame = null;
     }
 
+    stopVoiceSampling();
+
     if (state.audioContext) {
       try {
         state.audioContext.close();
       } catch (e) {}
       state.audioContext = null;
       state.analyser = null;
+      state.pitchAnalyser = null;
     }
   }
 
