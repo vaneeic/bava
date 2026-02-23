@@ -3,7 +3,7 @@
    Offline support & caching
    ========================================= */
 
-const CACHE_NAME = 'bava-v1';
+const CACHE_NAME = 'bava-v2';
 const ASSETS = [
   '/',
   '/index.html',

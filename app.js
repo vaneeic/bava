@@ -106,8 +106,8 @@
     volumeBar: $('#volume-bar'),
     // TV
     tvCaptions: $('#tv-captions'),
-    tvCaptionLine1: $('#tv-caption-line-1'),
-    tvCaptionLine2: $('#tv-caption-line-2'),
+    tvCaptionsList: $('#tv-captions-list'),
+    tvCaptionLive: $('#tv-caption-live'),
     tvEmptyState: $('#tv-empty-state'),
     btnTvMic: $('#btn-tv-mic'),
     tvMicRing: $('#tv-mic-ring'),
@@ -140,6 +140,7 @@
     loadSettings();
     applySettings();
     setupEventListeners();
+    setupTVScrollDetection();
     checkSpeechSupport();
   }
 
@@ -1058,40 +1059,89 @@
   // ==========================================
   // TV MODE CAPTIONS
   // ==========================================
-  let tvPreviousLine = '';
+  let tvAutoScroll = true;
+  let tvScrollTimer = null;
 
-  let tvPreviousColor = null;
+  /**
+   * Set up scroll detection on the TV captions container.
+   * When the user scrolls up manually, pause auto-scroll.
+   * When they let go (stop scrolling), resume auto-scroll after 3s.
+   */
+  function setupTVScrollDetection() {
+    if (!els.tvCaptions) return;
+
+    els.tvCaptions.addEventListener('scroll', () => {
+      // Check if user scrolled away from bottom
+      const el = els.tvCaptions;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+
+      if (atBottom) {
+        tvAutoScroll = true;
+        clearTimeout(tvScrollTimer);
+      } else {
+        tvAutoScroll = false;
+        // Resume auto-scroll after 3 seconds of no interaction
+        clearTimeout(tvScrollTimer);
+        tvScrollTimer = setTimeout(() => {
+          tvAutoScroll = true;
+          tvScrollToBottom();
+        }, 3000);
+      }
+    });
+
+    // Touch end also resumes auto-scroll timer
+    els.tvCaptions.addEventListener('touchend', () => {
+      if (!tvAutoScroll) {
+        clearTimeout(tvScrollTimer);
+        tvScrollTimer = setTimeout(() => {
+          tvAutoScroll = true;
+          tvScrollToBottom();
+        }, 3000);
+      }
+    });
+  }
+
+  function tvScrollToBottom() {
+    if (!els.tvCaptions) return;
+    els.tvCaptions.scrollTop = els.tvCaptions.scrollHeight;
+  }
 
   function updateTVCaptions(text, isFinal, speakerColor) {
     els.tvCaptions.classList.add('visible');
     els.tvEmptyState.classList.add('has-content');
 
     if (isFinal) {
-      // Move current to previous line
-      els.tvCaptionLine1.textContent = tvPreviousLine;
-      els.tvCaptionLine1.classList.remove('active');
-      if (tvPreviousColor) {
-        els.tvCaptionLine1.style.borderLeft = `4px solid ${tvPreviousColor.hex}`;
-        els.tvCaptionLine1.style.paddingLeft = '0.8rem';
-      }
-
-      els.tvCaptionLine2.textContent = text;
-      els.tvCaptionLine2.classList.add('active');
+      // Add a new permanent caption line
+      const line = document.createElement('div');
+      line.className = 'tv-caption-line';
+      line.textContent = text;
       if (speakerColor) {
-        els.tvCaptionLine2.style.borderLeft = `4px solid ${speakerColor.hex}`;
-        els.tvCaptionLine2.style.paddingLeft = '0.8rem';
+        line.style.borderLeft = `4px solid ${speakerColor.hex}`;
+        line.style.paddingLeft = '0.8rem';
+        line.style.textAlign = 'left';
       }
+      els.tvCaptionsList.appendChild(line);
 
-      tvPreviousLine = text;
-      tvPreviousColor = speakerColor;
+      // Clear live text
+      els.tvCaptionLive.textContent = '';
+
+      // Keep max 100 lines to prevent memory issues
+      while (els.tvCaptionsList.children.length > 100) {
+        els.tvCaptionsList.removeChild(els.tvCaptionsList.firstChild);
+      }
     } else {
-      // Show interim on active line
-      els.tvCaptionLine2.textContent = text;
-      els.tvCaptionLine2.classList.add('active');
+      // Show interim text in the live area
+      els.tvCaptionLive.textContent = text;
       if (speakerColor) {
-        els.tvCaptionLine2.style.borderLeft = `4px solid ${speakerColor.hex}`;
-        els.tvCaptionLine2.style.paddingLeft = '0.8rem';
+        els.tvCaptionLive.style.borderLeft = `4px solid ${speakerColor.hex}`;
+        els.tvCaptionLive.style.paddingLeft = '0.8rem';
+        els.tvCaptionLive.style.textAlign = 'left';
       }
+    }
+
+    // Auto-scroll to bottom if enabled
+    if (tvAutoScroll) {
+      tvScrollToBottom();
     }
   }
 
