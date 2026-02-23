@@ -15,6 +15,20 @@
   const MAX_HISTORY = 50;
   const AUTO_RESTART_DELAY = 300;
   const SILENCE_TIMEOUT = 60000; // 1 minute of silence before auto-stop
+  const SPEAKER_CHANGE_THRESHOLD = 2000; // 2 seconds of silence = new speaker
+
+  // Accessible color palette — distinguishable for colorblind users
+  // Uses Wong's colorblind-safe palette + extras
+  const SPEAKER_COLORS = [
+    { name: 'Blauw',    hex: '#4a9eff', border: '#2b7de9' },
+    { name: 'Oranje',   hex: '#e69f00', border: '#c98a00' },
+    { name: 'Groen',    hex: '#009e73', border: '#007a59' },
+    { name: 'Roze',     hex: '#cc79a7', border: '#b05e8c' },
+    { name: 'Geel',     hex: '#f0e442', border: '#d4c830' },
+    { name: 'Cyaan',    hex: '#56b4e9', border: '#3a9ad4' },
+    { name: 'Rood',     hex: '#d55e00', border: '#b34d00' },
+    { name: 'Paars',    hex: '#a855f7', border: '#8b3de0' },
+  ];
 
   // ==========================================
   // STATE
@@ -32,6 +46,12 @@
     silenceTimer: null,
     restartTimer: null,
     volumeAnimFrame: null,
+    // Speaker tracking
+    currentSpeakerId: 0,
+    speakerColorMap: {},    // speakerId -> colorIndex
+    nextColorIndex: 0,
+    lastSpeechTime: null,   // timestamp of last speech event
+    speakerCount: 0,
     settings: {
       theme: 'dark',
       fontSize: 24,
@@ -89,6 +109,9 @@
     toggleAutosave: $('#toggle-autosave'),
     toggleHaptic: $('#toggle-haptic'),
     themeChips: $$('[data-theme]'),
+    // Speaker legend
+    speakerLegend: $('#speaker-legend'),
+    speakerLegendList: $('#speaker-legend-list'),
     // Toast
     toast: $('#toast'),
   };
@@ -251,9 +274,71 @@
     return recognition;
   }
 
+  // ==========================================
+  // SPEAKER DETECTION
+  // ==========================================
+  function detectSpeakerChange() {
+    const now = Date.now();
+    if (state.lastSpeechTime && (now - state.lastSpeechTime) > SPEAKER_CHANGE_THRESHOLD) {
+      // Silence gap exceeded threshold — likely a new speaker
+      state.currentSpeakerId = state.speakerCount;
+      state.speakerCount++;
+    }
+    state.lastSpeechTime = now;
+    return state.currentSpeakerId;
+  }
+
+  function getSpeakerColor(speakerId) {
+    if (!(speakerId in state.speakerColorMap)) {
+      state.speakerColorMap[speakerId] = state.nextColorIndex % SPEAKER_COLORS.length;
+      state.nextColorIndex++;
+      updateSpeakerLegend();
+    }
+    return SPEAKER_COLORS[state.speakerColorMap[speakerId]];
+  }
+
+  function getSpeakerLabel(speakerId) {
+    return `Spreker ${speakerId + 1}`;
+  }
+
+  function updateSpeakerLegend() {
+    if (!els.speakerLegend || !els.speakerLegendList) return;
+
+    const entries = Object.entries(state.speakerColorMap);
+    if (entries.length === 0) {
+      els.speakerLegend.classList.add('hidden');
+      return;
+    }
+
+    els.speakerLegend.classList.remove('hidden');
+    els.speakerLegendList.innerHTML = '';
+
+    entries.forEach(([id, colorIdx]) => {
+      const color = SPEAKER_COLORS[colorIdx];
+      const chip = document.createElement('span');
+      chip.className = 'speaker-chip';
+      chip.style.setProperty('--speaker-color', color.hex);
+      chip.textContent = getSpeakerLabel(parseInt(id));
+      els.speakerLegendList.appendChild(chip);
+    });
+  }
+
+  function resetSpeakerState() {
+    state.currentSpeakerId = 0;
+    state.speakerColorMap = {};
+    state.nextColorIndex = 0;
+    state.lastSpeechTime = null;
+    state.speakerCount = 1; // Start with speaker 0
+    updateSpeakerLegend();
+  }
+
   function handleResults(event) {
     let interimTranscript = '';
     let finalTranscript = '';
+
+    // Detect potential speaker change based on silence gap
+    const speakerId = detectSpeakerChange();
+    const speakerColor = getSpeakerColor(speakerId);
 
     for (let i = event.resultIndex; i < event.results.length; i++) {
       const result = event.results[i];
@@ -262,7 +347,7 @@
 
       if (result.isFinal) {
         finalTranscript += text;
-        addCaptionBubble(text.trim(), confidence);
+        addCaptionBubble(text.trim(), confidence, speakerId, speakerColor);
       } else {
         interimTranscript += text;
       }
@@ -270,7 +355,7 @@
 
     // Update live text
     if (interimTranscript) {
-      showLiveText(interimTranscript);
+      showLiveText(interimTranscript, speakerColor);
     } else {
       hideLiveText();
     }
@@ -278,10 +363,10 @@
     // TV mode update
     if (state.currentMode === 'tv') {
       if (interimTranscript) {
-        updateTVCaptions(interimTranscript, false);
+        updateTVCaptions(interimTranscript, false, speakerColor);
       }
       if (finalTranscript) {
-        updateTVCaptions(finalTranscript, true);
+        updateTVCaptions(finalTranscript, true, speakerColor);
       }
     }
   }
@@ -351,6 +436,7 @@
       state.recognition.start();
       state.sessionParagraphs = [];
       state.currentTranscript = '';
+      resetSpeakerState();
       showToast('🎙️ Luisteren...');
     } catch (e) {
       console.error('Failed to start recognition:', e);
@@ -448,7 +534,7 @@
   // ==========================================
   // CAPTION DISPLAY
   // ==========================================
-  function addCaptionBubble(text, confidence) {
+  function addCaptionBubble(text, confidence, speakerId, speakerColor) {
     if (!text) return;
 
     // Store in session
@@ -456,6 +542,7 @@
       text,
       confidence,
       time: new Date(),
+      speakerId,
     });
 
     if (state.currentMode === 'conversation') {
@@ -464,13 +551,21 @@
 
       const bubble = document.createElement('div');
       bubble.className = 'caption-bubble';
-      
+      bubble.style.setProperty('--speaker-color', speakerColor.hex);
+      bubble.style.setProperty('--speaker-border', speakerColor.border);
+
       // Confidence indicator
       if (confidence >= 0.85) {
         bubble.classList.add('high-confidence');
       } else if (confidence < 0.6) {
         bubble.classList.add('low-confidence');
       }
+
+      // Speaker label
+      const speakerEl = document.createElement('span');
+      speakerEl.className = 'speaker-label';
+      speakerEl.style.color = speakerColor.hex;
+      speakerEl.textContent = getSpeakerLabel(speakerId);
 
       const textEl = document.createElement('span');
       textEl.textContent = text;
@@ -483,6 +578,7 @@
       timeEl.className = 'timestamp';
       timeEl.textContent = formatTime(new Date());
 
+      bubble.appendChild(speakerEl);
       bubble.appendChild(textEl);
       bubble.appendChild(confEl);
       bubble.appendChild(timeEl);
@@ -499,8 +595,12 @@
     }
   }
 
-  function showLiveText(text) {
+  function showLiveText(text, speakerColor) {
     els.liveText.textContent = text;
+    if (speakerColor) {
+      els.captionLive.style.setProperty('--speaker-color', speakerColor.hex);
+      els.captionLive.style.borderLeft = `4px solid ${speakerColor.hex}`;
+    }
     els.captionLive.classList.add('visible');
     els.emptyState.classList.add('has-content');
     scrollToBottom();
@@ -523,7 +623,9 @@
   // ==========================================
   let tvPreviousLine = '';
 
-  function updateTVCaptions(text, isFinal) {
+  let tvPreviousColor = null;
+
+  function updateTVCaptions(text, isFinal, speakerColor) {
     els.tvCaptions.classList.add('visible');
     els.tvEmptyState.classList.add('has-content');
 
@@ -531,15 +633,28 @@
       // Move current to previous line
       els.tvCaptionLine1.textContent = tvPreviousLine;
       els.tvCaptionLine1.classList.remove('active');
-      
+      if (tvPreviousColor) {
+        els.tvCaptionLine1.style.borderLeft = `4px solid ${tvPreviousColor.hex}`;
+        els.tvCaptionLine1.style.paddingLeft = '0.8rem';
+      }
+
       els.tvCaptionLine2.textContent = text;
       els.tvCaptionLine2.classList.add('active');
-      
+      if (speakerColor) {
+        els.tvCaptionLine2.style.borderLeft = `4px solid ${speakerColor.hex}`;
+        els.tvCaptionLine2.style.paddingLeft = '0.8rem';
+      }
+
       tvPreviousLine = text;
+      tvPreviousColor = speakerColor;
     } else {
       // Show interim on active line
       els.tvCaptionLine2.textContent = text;
       els.tvCaptionLine2.classList.add('active');
+      if (speakerColor) {
+        els.tvCaptionLine2.style.borderLeft = `4px solid ${speakerColor.hex}`;
+        els.tvCaptionLine2.style.paddingLeft = '0.8rem';
+      }
     }
   }
 
