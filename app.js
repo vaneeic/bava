@@ -239,8 +239,7 @@
     }
     renderSavedSpeakers();
 
-    // Prevent screen from sleeping using Wake Lock API
-    requestWakeLock();
+    // Re-acquire wake lock when returning to the app while listening
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && state.isListening) {
         requestWakeLock();
@@ -848,6 +847,7 @@
       state.sessionParagraphs = [];
       state.currentTranscript = '';
       resetSpeakerState();
+      requestWakeLock();
       showToast('🎙️ Luisteren...');
     } catch (e) {
       console.error('Failed to start recognition:', e);
@@ -879,6 +879,7 @@
 
     updateMicUI(false);
     hideLiveText();
+    releaseWakeLock();
 
     // Save final speaker profile state
     const currentFingerprint = buildFingerprint(state.voiceSampleBuffer);
@@ -1486,17 +1487,76 @@
   }
 
   // ==========================================
-  // WAKE LOCK
+  // WAKE LOCK — Keep screen active while listening
   // ==========================================
   let wakeLock = null;
+  let noSleepVideo = null;
 
   async function requestWakeLock() {
+    // Method 1: Wake Lock API (works on modern browsers)
     try {
       if ('wakeLock' in navigator) {
         wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => {
+          // Re-acquire if still listening
+          if (state.isListening) {
+            requestWakeLock();
+          }
+        });
+        return; // Success — no need for fallback
       }
     } catch (e) {
-      // Wake lock not supported or failed
+      // Wake Lock not supported or failed — fall through to video fallback
+    }
+
+    // Method 2: Video fallback for iOS Safari / older browsers
+    // Playing a tiny silent video keeps the screen awake
+    startNoSleepVideo();
+  }
+
+  function releaseWakeLock() {
+    // Release Wake Lock API
+    if (wakeLock) {
+      try { wakeLock.release(); } catch (e) {}
+      wakeLock = null;
+    }
+    // Stop video fallback
+    stopNoSleepVideo();
+  }
+
+  function startNoSleepVideo() {
+    if (noSleepVideo) return; // Already running
+
+    // Create a tiny inline video that loops silently
+    noSleepVideo = document.createElement('video');
+    noSleepVideo.setAttribute('playsinline', '');
+    noSleepVideo.setAttribute('muted', '');
+    noSleepVideo.muted = true;
+    noSleepVideo.loop = true;
+    noSleepVideo.style.position = 'fixed';
+    noSleepVideo.style.top = '-1px';
+    noSleepVideo.style.left = '-1px';
+    noSleepVideo.style.width = '1px';
+    noSleepVideo.style.height = '1px';
+    noSleepVideo.style.opacity = '0.01';
+
+    // Minimal silent MP4 (base64-encoded, <1KB)
+    // This is a standard 1-second silent video used by NoSleep.js
+    noSleepVideo.src = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAAu1tZGF0AAACrQYF//+p3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE0OCByMjY0MyA1YzY1NzA0IC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAxNSAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTEgcmVmPTMgZGVibG9jaz0xOjA6MCBhbmFseXNlPTB4MzoweDExMyBtZT1oZXggc3VibWU9NyBwc3k9MSBwc3lfcmQ9MS4wMDowLjAwIG1peGVkX3JlZj0xIG1lX3JhbmdlPTE2IGNocm9tYV9tZT0xIHRyZWxsaXM9MSA4eDhkY3Q9MSBjcW09MCBkZWFkem9uZT0yMSwxMSBmYXN0X3Bza2lwPTEgY2hyb21hX3FwX29mZnNldD0tMiB0aHJlYWRzPTEgbG9va2FoZWFkX3RocmVhZHM9MSBzbGljZWRfdGhyZWFkcz0wIG5yPTAgZGVjaW1hdGU9MSBpbnRlcmxhY2VkPTAgYmx1cmF5X2NvbXBhdD0wIGNvbnN0cmFpbmVkX2ludHJhPTAgYmZyYW1lcz0zIGJfcHlyYW1pZD0yIGJfYWRhcHQ9MSBiX2JpYXM9MCBkaXJlY3Q9MSB3ZWlnaHRiPTEgb3Blbl9nb3A9MCB3ZWlnaHRwPTIga2V5aW50PTI1MCBrZXlpbnRfbWluPTI1IHNjZW5lY3V0PTQwIGludHJhX3JlZnJlc2g9MCByY19sb29rYWhlYWQ9NDAgcmM9Y3JmIG1idHJlZT0xIGNyZj0yMy4wIHFjb21wPTAuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCBpcF9yYXRpbz0xLjQwIGFxPTE6MS4wMACAAAABZWWIhAAv//72rvzLK0cLlS4dWXuzUfLoSXL0IB9Y4AAAADAAAM0BAAUAHkEBAABBAAHCMQAAAQAAAAIAAAAUQAABg5OIhJcAAJcgASsB4AAAAAFBAAGDkAQAAAAAMAAAAAAAABgAAABlQABo4gEHAAEQAAADAAAAAAAAABcAAGHYAAfQBEAAAQABhwAFiA8AAP//AQABhxAGH/8AAAGBAAJYCfsAAAABBQABiJAEUf/xAAABkQACWAQAAAAAAAAAAAAAABAAAAGdAAAAAAAAAAAAAAAiAAAAZQAAAAAAAAAAAAAA';
+
+    document.body.appendChild(noSleepVideo);
+
+    // Must play on user interaction context — we call this from startListening which is from a click
+    noSleepVideo.play().catch(() => {
+      // Silent fail — video autoplay might be blocked
+    });
+  }
+
+  function stopNoSleepVideo() {
+    if (noSleepVideo) {
+      noSleepVideo.pause();
+      noSleepVideo.remove();
+      noSleepVideo = null;
     }
   }
 
