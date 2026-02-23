@@ -3,15 +3,15 @@
    Offline support & caching
    ========================================= */
 
-const CACHE_NAME = 'bava-v2';
+const CACHE_NAME = 'bava-v3';
 const ASSETS = [
-  '/',
-  '/index.html',
-  '/styles.css',
-  '/app.js',
-  '/manifest.json',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
+  '/bava/',
+  '/bava/index.html',
+  '/bava/styles.css',
+  '/bava/app.js',
+  '/bava/manifest.json',
+  '/bava/icons/icon-192.png',
+  '/bava/icons/icon-512.png',
 ];
 
 // Install — cache assets
