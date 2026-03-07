@@ -176,50 +176,148 @@ struct TVModeView: View {
     // MARK: - Settings Panel
 
     private var settingsPanel: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("TV Instellingen")
-                .font(.headline)
-                .foregroundColor(.white)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // Header
+                HStack {
+                    Text("TV Instellingen")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                    Spacer()
+                    Button { showSettings = false } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title3)
+                            .foregroundColor(.white.opacity(0.6))
+                    }
+                }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Lettergrootte: \(Int(fontSize))pt")
+                Divider().background(Color.white.opacity(0.2))
+
+                // --- AUDIO FINE-TUNING ---
+                Text("GELUID")
+                    .font(.caption.bold())
+                    .foregroundColor(Color("AccentColor"))
+
+                // Mic gain
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Image(systemName: "mic.fill")
+                        Text("Versterking")
+                        Spacer()
+                        Text("\(String(format: "%.1f", speechService.micGain))x")
+                            .monospacedDigit()
+                    }
                     .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.8))
-                Slider(value: $fontSize, in: 16...72, step: 2)
+                    .foregroundColor(.white.opacity(0.9))
+                    Slider(value: $speechService.micGain, in: 1...10, step: 0.5)
+                        .tint(Color("AccentColor"))
+                }
+
+                // Voice optimization toggle
+                Toggle(isOn: $speechService.voiceOptimized) {
+                    HStack {
+                        Image(systemName: "waveform.badge.mic")
+                        Text("Stemoptimalisatie")
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.9))
+                }
+                .tint(Color("AccentColor"))
+
+                // On-device toggle
+                Toggle(isOn: $speechService.forceOnDevice) {
+                    HStack {
+                        Image(systemName: speechService.forceOnDevice ? "cpu" : "cloud")
+                        Text(speechService.forceOnDevice ? "On-device" : "Server")
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.9))
+                }
+                .tint(Color("AccentColor"))
+
+                // Min confidence
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Image(systemName: "checkmark.seal")
+                        Text("Min. betrouwbaarheid")
+                        Spacer()
+                        Text("\(Int(speechService.minConfidence * 100))%")
+                            .monospacedDigit()
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.9))
+                    Slider(value: $speechService.minConfidence, in: 0...0.8, step: 0.05)
+                        .tint(Color("AccentColor"))
+                }
+
+                // Apply button
+                if speechService.isListening {
+                    Button {
+                        speechService.applyAudioSettings()
+                    } label: {
+                        Label("Toepassen", systemImage: "arrow.clockwise")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.borderedProminent)
                     .tint(Color("AccentColor"))
-            }
+                }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Max regels: \(maxLines)")
+                // Live volume
+                if speechService.isListening {
+                    HStack {
+                        Image(systemName: "speaker.wave.2")
+                            .foregroundColor(.white.opacity(0.6))
+                        ProgressView(value: Double(speechService.audioLevel))
+                            .tint(volumeColor)
+                        Text("\(Int(speechService.audioLevel * 100))%")
+                            .monospacedDigit()
+                            .frame(width: 36, alignment: .trailing)
+                    }
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.7))
+                }
+
+                Divider().background(Color.white.opacity(0.2))
+
+                // --- DISPLAY ---
+                Text("WEERGAVE")
+                    .font(.caption.bold())
+                    .foregroundColor(Color("AccentColor"))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Lettergrootte")
+                        Spacer()
+                        Text("\(Int(fontSize))pt")
+                            .monospacedDigit()
+                    }
                     .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.8))
-                Slider(value: Binding(
-                    get: { Double(maxLines) },
-                    set: { maxLines = Int($0) }
-                ), in: 1...6, step: 1)
-                    .tint(Color("AccentColor"))
-            }
+                    .foregroundColor(.white.opacity(0.9))
+                    Slider(value: $fontSize, in: 16...72, step: 2)
+                        .tint(Color("AccentColor"))
+                }
 
-            // On-device status
-            HStack {
-                Image(systemName: "cpu")
-                Text("On-device herkenning")
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Max regels")
+                        Spacer()
+                        Text("\(maxLines)")
+                            .monospacedDigit()
+                    }
                     .font(.subheadline)
-                Spacer()
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.green)
+                    .foregroundColor(.white.opacity(0.9))
+                    Slider(value: Binding(
+                        get: { Double(maxLines) },
+                        set: { maxLines = Int($0) }
+                    ), in: 1...6, step: 1)
+                        .tint(Color("AccentColor"))
+                }
             }
-            .foregroundColor(.white.opacity(0.8))
-
-            Spacer()
-
-            Button("Sluiten") {
-                showSettings = false
-            }
-            .foregroundColor(Color("AccentColor"))
+            .padding(20)
         }
-        .padding(24)
-        .frame(width: 280)
+        .frame(width: 300)
+        .frame(maxHeight: 500)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.trailing, 16)

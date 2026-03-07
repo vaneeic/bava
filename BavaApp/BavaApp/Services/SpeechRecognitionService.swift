@@ -142,11 +142,15 @@ final class SpeechRecognitionService: ObservableObject {
                 // Configure audio session with tuning options
                 let audioSession = AVAudioSession.sharedInstance()
                 let audioMode: AVAudioSession.Mode = useVoiceMode ? .voiceChat : .measurement
-                var sessionOptions: AVAudioSession.CategoryOptions = [.duckOthers]
-                if !useNoiseSuppression {
-                    sessionOptions.insert(.allowBluetooth)
+
+                // Try with preferred options, fall back to simpler config
+                // .duckOthers can cause -50 on some devices
+                do {
+                    try audioSession.setCategory(.record, mode: audioMode, options: [])
+                } catch {
+                    // Fallback: simplest possible config
+                    try audioSession.setCategory(.record, mode: .default, options: [])
                 }
-                try audioSession.setCategory(.record, mode: audioMode, options: sessionOptions)
                 try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
 
                 // Create recognition request with tuning
