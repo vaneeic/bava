@@ -21,6 +21,23 @@ final class SpeechRecognitionService: ObservableObject {
     @Published var errorMessage: String?
     @Published var isAuthorized = false
 
+    // MARK: - Audio Tuning (live-adjustable)
+
+    /// Microphone gain boost (1.0 = normal, up to 10.0)
+    @Published var micGain: Float = 2.0
+
+    /// Use voice-optimized audio mode vs raw measurement mode
+    @Published var voiceOptimized: Bool = true
+
+    /// Enable noise suppression (via audio session)
+    @Published var noiseSuppression: Bool = true
+
+    /// Force on-device recognition (no server)
+    @Published var forceOnDevice: Bool = true
+
+    /// Minimum confidence threshold (0..1) — lower = more text shown
+    @Published var minConfidence: Float = 0.0
+
     // MARK: - Private
 
     private let speechRecognizer: SFSpeechRecognizer?
@@ -29,6 +46,7 @@ final class SpeechRecognitionService: ObservableObject {
     private let audioEngine = AVAudioEngine()
     private var silenceTimer: Timer?
     private var sessionStartTime: Date?
+    private var gainNode: AVAudioMixerNode?
 
     /// Dedicated serial queue for all audio operations
     private let audioQueue = DispatchQueue(label: "com.icvanee.bava.audio", qos: .userInteractive)
@@ -114,15 +132,26 @@ final class SpeechRecognitionService: ObservableObject {
         audioQueue.async { [weak self] in
             guard let self else { return }
 
+            // Read tuning settings (captured from main thread)
+            let currentGain = self.micGain
+            let useVoiceMode = self.voiceOptimized
+            let useNoiseSuppression = self.noiseSuppression
+            let onDevice = self.forceOnDevice
+
             do {
-                // Configure audio session
+                // Configure audio session with tuning options
                 let audioSession = AVAudioSession.sharedInstance()
-                try audioSession.setCategory(.record, mode: .measurement, options: [.duckOthers])
+                let audioMode: AVAudioSession.Mode = useVoiceMode ? .voiceChat : .measurement
+                var sessionOptions: AVAudioSession.CategoryOptions = [.duckOthers]
+                if !useNoiseSuppression {
+                    sessionOptions.insert(.allowBluetooth)
+                }
+                try audioSession.setCategory(.record, mode: audioMode, options: sessionOptions)
                 try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
 
-                // Create recognition request
+                // Create recognition request with tuning
                 let request = SFSpeechAudioBufferRecognitionRequest()
-                if recognizer.supportsOnDeviceRecognition {
+                if onDevice && recognizer.supportsOnDeviceRecognition {
                     request.requiresOnDeviceRecognition = true
                 }
                 request.shouldReportPartialResults = true
@@ -132,15 +161,26 @@ final class SpeechRecognitionService: ObservableObject {
                     "volume", "microfoon", "spreker"
                 ]
 
-                // Install audio tap — runs on audio render thread
+                // Install audio tap with gain boost
                 let inputNode = engine.inputNode
                 let recordingFormat = inputNode.outputFormat(forBus: 0)
                 let levelRef = self._currentLevel
 
                 inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
+                    // Apply gain boost to audio data before sending to recognizer
+                    if currentGain != 1.0, let channelData = buffer.floatChannelData {
+                        let frameLength = Int(buffer.frameLength)
+                        let channels = Int(buffer.format.channelCount)
+                        for ch in 0..<channels {
+                            for i in 0..<frameLength {
+                                channelData[ch][i] *= currentGain
+                            }
+                        }
+                    }
+
                     request.append(buffer)
 
-                    // Calculate RMS for volume meter
+                    // Calculate RMS for volume meter (after gain)
                     guard let channelData = buffer.floatChannelData?[0] else { return }
                     let frameLength = Int(buffer.frameLength)
                     var sum: Float = 0
@@ -149,7 +189,7 @@ final class SpeechRecognitionService: ObservableObject {
                         sum += sample * sample
                     }
                     let rms = sqrt(sum / Float(max(1, frameLength)))
-                    let normalized = min(1.0, rms * 5.0) // boost for visibility
+                    let normalized = min(1.0, rms * 3.0)
                     levelRef.value = normalized
                 }
 
@@ -247,6 +287,12 @@ final class SpeechRecognitionService: ObservableObject {
             let confidence = bestTranscription.segments.reduce(0.0) { $0 + $1.confidence }
                 / Float(max(1, bestTranscription.segments.count))
 
+            // Skip low-confidence results if threshold is set
+            guard confidence >= minConfidence else {
+                currentText = ""
+                return
+            }
+
             let caption = Caption(
                 text: text,
                 confidence: confidence,
@@ -261,6 +307,12 @@ final class SpeechRecognitionService: ObservableObject {
         } else {
             currentText = text
         }
+    }
+
+    /// Restart with new audio settings (call when tuning changes while listening)
+    func applyAudioSettings() {
+        guard isListening else { return }
+        restartListening()
     }
 
     // MARK: - Auto-restart for continuous listening
