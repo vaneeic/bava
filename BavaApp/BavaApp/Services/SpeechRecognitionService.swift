@@ -38,6 +38,21 @@ final class SpeechRecognitionService: ObservableObject {
     /// Minimum confidence threshold (0..1) — lower = more text shown
     @Published var minConfidence: Float = 0.0
 
+    /// Enable high-pass filter to cut low rumble/hum (TV, airco)
+    @Published var highPassEnabled: Bool = false
+
+    /// High-pass filter cutoff frequency in Hz
+    @Published var highPassFrequency: Float = 200.0
+
+    /// Recognition task hint: 0=auto, 1=dictation, 2=search, 3=confirmation
+    @Published var taskHint: Int = 1
+
+    /// Custom context words (comma-separated) for better recognition
+    @Published var customContextStrings: String = ""
+
+    /// Automatic punctuation
+    @Published var addsPunctuation: Bool = true
+
     // MARK: - Private
 
     private let speechRecognizer: SFSpeechRecognizer?
@@ -135,8 +150,13 @@ final class SpeechRecognitionService: ObservableObject {
             // Read tuning settings (captured from main thread)
             let currentGain = self.micGain
             let useVoiceMode = self.voiceOptimized
-            let useNoiseSuppression = self.noiseSuppression
+            let useNoiseGate = self.noiseSuppression
             let onDevice = self.forceOnDevice
+            let hpEnabled = self.highPassEnabled
+            let hpFrequency = self.highPassFrequency
+            let currentTaskHint = self.taskHint
+            let currentContextStrings = self.customContextStrings
+            let currentPunctuation = self.addsPunctuation
 
             do {
                 // Configure audio session with tuning options
@@ -159,22 +179,78 @@ final class SpeechRecognitionService: ObservableObject {
                     request.requiresOnDeviceRecognition = true
                 }
                 request.shouldReportPartialResults = true
-                request.addsPunctuation = true
-                request.contextualStrings = [
+                request.addsPunctuation = currentPunctuation
+
+                // Task hint
+                switch currentTaskHint {
+                case 0: request.taskHint = .unspecified
+                case 2: request.taskHint = .search
+                case 3: request.taskHint = .confirmation
+                default: request.taskHint = .dictation
+                }
+
+                // Context strings (built-in + custom)
+                var contextStrings = [
                     "ondertiteling", "ondertitels", "televisie",
                     "volume", "microfoon", "spreker"
                 ]
+                let customWords = currentContextStrings
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                contextStrings.append(contentsOf: customWords)
+                request.contextualStrings = contextStrings
 
-                // Install audio tap with gain boost
+                // Install audio tap with full DSP pipeline
                 let inputNode = engine.inputNode
                 let recordingFormat = inputNode.outputFormat(forBus: 0)
                 let levelRef = self._currentLevel
 
+                // High-pass filter coefficient
+                let hpAlpha: Float = {
+                    let dt: Float = 1.0 / Float(recordingFormat.sampleRate)
+                    let rc: Float = 1.0 / (2.0 * Float.pi * hpFrequency)
+                    return rc / (rc + dt)
+                }()
+                let filterState = AudioFilterState()
+
                 inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
-                    // Apply gain boost to audio data before sending to recognizer
-                    if currentGain != 1.0, let channelData = buffer.floatChannelData {
-                        let frameLength = Int(buffer.frameLength)
-                        let channels = Int(buffer.format.channelCount)
+                    guard let channelData = buffer.floatChannelData else { return }
+                    let frameLength = Int(buffer.frameLength)
+                    let channels = Int(buffer.format.channelCount)
+
+                    // 1. High-pass filter (removes low rumble/hum)
+                    if hpEnabled {
+                        filterState.applyHighPass(
+                            channelData: channelData,
+                            frameLength: frameLength,
+                            channels: channels,
+                            alpha: hpAlpha
+                        )
+                    }
+
+                    // 2. Calculate RMS (after filter, before gain)
+                    var sum: Float = 0
+                    for i in 0..<frameLength {
+                        let s = channelData[0][i]
+                        sum += s * s
+                    }
+                    let rms = sqrt(sum / Float(max(1, frameLength)))
+
+                    // 3. Noise gate (buffer-level to avoid click artifacts)
+                    if useNoiseGate && rms < 0.008 {
+                        for ch in 0..<channels {
+                            for i in 0..<frameLength {
+                                channelData[ch][i] = 0
+                            }
+                        }
+                        levelRef.value = 0
+                        request.append(buffer)
+                        return
+                    }
+
+                    // 4. Gain boost
+                    if currentGain != 1.0 {
                         for ch in 0..<channels {
                             for i in 0..<frameLength {
                                 channelData[ch][i] *= currentGain
@@ -183,18 +259,7 @@ final class SpeechRecognitionService: ObservableObject {
                     }
 
                     request.append(buffer)
-
-                    // Calculate RMS for volume meter (after gain)
-                    guard let channelData = buffer.floatChannelData?[0] else { return }
-                    let frameLength = Int(buffer.frameLength)
-                    var sum: Float = 0
-                    for i in 0..<frameLength {
-                        let sample = channelData[i]
-                        sum += sample * sample
-                    }
-                    let rms = sqrt(sum / Float(max(1, frameLength)))
-                    let normalized = min(1.0, rms * 3.0)
-                    levelRef.value = normalized
+                    levelRef.value = min(1.0, rms * currentGain * 3.0)
                 }
 
                 engine.prepare()
@@ -394,6 +459,35 @@ final class SpeechRecognitionService: ObservableObject {
         captions.removeAll()
         currentText = ""
         sessionStartTime = nil
+    }
+}
+
+// MARK: - Audio DSP helpers
+
+/// Persistent state for high-pass IIR filter across audio buffers.
+private final class AudioFilterState: @unchecked Sendable {
+    private var prevInput: [Float] = []
+    private var prevOutput: [Float] = []
+
+    func applyHighPass(
+        channelData: UnsafePointer<UnsafeMutablePointer<Float>>,
+        frameLength: Int,
+        channels: Int,
+        alpha: Float
+    ) {
+        if prevInput.count != channels {
+            prevInput = Array(repeating: 0, count: channels)
+            prevOutput = Array(repeating: 0, count: channels)
+        }
+        for ch in 0..<channels {
+            for i in 0..<frameLength {
+                let input = channelData[ch][i]
+                let output = alpha * (prevOutput[ch] + input - prevInput[ch])
+                prevInput[ch] = input
+                prevOutput[ch] = output
+                channelData[ch][i] = output
+            }
+        }
     }
 }
 

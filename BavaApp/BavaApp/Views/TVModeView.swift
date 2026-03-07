@@ -6,6 +6,8 @@ struct TVModeView: View {
     @EnvironmentObject var speechService: SpeechRecognitionService
     @AppStorage("tvFontSize") private var fontSize: Double = 32
     @AppStorage("tvMaxLines") private var maxLines: Int = 3
+    @AppStorage("captionHoldTime") private var captionHoldTime: Double = 0
+    @AppStorage("subtitleBackground") private var subtitleBackground: Bool = true
     @State private var showControls = true
     @State private var showSettings = false
     @State private var controlsTimer: Timer?
@@ -15,8 +17,15 @@ struct TVModeView: View {
     private var displayLines: [DisplayLine] {
         var lines: [DisplayLine] = []
 
+        // Filter by hold time if set
+        var recentCaptions = speechService.captions
+        if captionHoldTime > 0 {
+            let cutoff = Date().addingTimeInterval(-captionHoldTime)
+            recentCaptions = recentCaptions.filter { $0.timestamp > cutoff }
+        }
+
         // Add last finalized captions — use caption.id for stable identity
-        let recent = Array(speechService.captions.suffix(maxLines))
+        let recent = Array(recentCaptions.suffix(maxLines))
         for caption in recent {
             lines.append(DisplayLine(id: caption.id.uuidString, text: caption.text, isFinal: true))
         }
@@ -49,7 +58,15 @@ struct TVModeView: View {
                             .font(.system(size: fontSize, weight: .medium))
                             .foregroundColor(line.isFinal ? .white : .white.opacity(0.6))
                             .multilineTextAlignment(.center)
-                            .shadow(color: .black, radius: 4, x: 0, y: 2)
+                            .padding(.horizontal, subtitleBackground ? 16 : 0)
+                            .padding(.vertical, subtitleBackground ? 6 : 0)
+                            .background(
+                                subtitleBackground
+                                    ? Color.black.opacity(0.7)
+                                    : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 6)
+                            )
+                            .shadow(color: .black, radius: subtitleBackground ? 0 : 4, x: 0, y: 2)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
@@ -213,11 +230,48 @@ struct TVModeView: View {
                         .tint(Color("AccentColor"))
                 }
 
+                // High-pass filter
+                Toggle(isOn: $speechService.highPassEnabled) {
+                    HStack {
+                        Image(systemName: "waveform.path")
+                        Text("High-pass filter")
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.9))
+                }
+                .tint(Color("AccentColor"))
+
+                if speechService.highPassEnabled {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Cutoff")
+                            Spacer()
+                            Text("\(Int(speechService.highPassFrequency)) Hz")
+                                .monospacedDigit()
+                        }
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.7))
+                        Slider(value: $speechService.highPassFrequency, in: 50...500, step: 10)
+                            .tint(Color("AccentColor"))
+                    }
+                }
+
                 // Voice optimization toggle
                 Toggle(isOn: $speechService.voiceOptimized) {
                     HStack {
                         Image(systemName: "waveform.badge.mic")
                         Text("Stemoptimalisatie")
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.9))
+                }
+                .tint(Color("AccentColor"))
+
+                // Noise gate
+                Toggle(isOn: $speechService.noiseSuppression) {
+                    HStack {
+                        Image(systemName: "speaker.slash")
+                        Text("Ruisonderdrukking")
                     }
                     .font(.subheadline)
                     .foregroundColor(.white.opacity(0.9))
@@ -280,10 +334,85 @@ struct TVModeView: View {
 
                 Divider().background(Color.white.opacity(0.2))
 
-                // --- DISPLAY ---
+                // --- HERKENNING ---
+                Text("HERKENNING")
+                    .font(.caption.bold())
+                    .foregroundColor(Color("AccentColor"))
+
+                // Task hint
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Herkenningsmodus")
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.9))
+                    Picker("", selection: $speechService.taskHint) {
+                        Text("Automatisch").tag(0)
+                        Text("Dictatie").tag(1)
+                        Text("Zoeken").tag(2)
+                        Text("Bevestiging").tag(3)
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                // Punctuation
+                Toggle(isOn: $speechService.addsPunctuation) {
+                    HStack {
+                        Image(systemName: "textformat.abc")
+                        Text("Interpunctie")
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.9))
+                }
+                .tint(Color("AccentColor"))
+
+                // Custom context strings
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Image(systemName: "text.badge.plus")
+                        Text("Contextwoorden")
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.9))
+                    TextField("namen, programma's...", text: $speechService.customContextStrings)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption)
+                    Text("Kommagescheiden woorden voor betere herkenning")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.5))
+                }
+
+                Divider().background(Color.white.opacity(0.2))
+
+                // --- WEERGAVE ---
                 Text("WEERGAVE")
                     .font(.caption.bold())
                     .foregroundColor(Color("AccentColor"))
+
+                // Subtitle background
+                Toggle(isOn: $subtitleBackground) {
+                    HStack {
+                        Image(systemName: "rectangle.fill")
+                        Text("Ondertitel achtergrond")
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.9))
+                }
+                .tint(Color("AccentColor"))
+
+                // Caption hold time
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Image(systemName: "timer")
+                        Text(captionHoldTime == 0 ? "Altijd zichtbaar" : "\(Int(captionHoldTime))s")
+                        Spacer()
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.9))
+                    Slider(value: $captionHoldTime, in: 0...30, step: 1)
+                        .tint(Color("AccentColor"))
+                    Text("0 = altijd zichtbaar, anders verdwijnen na X seconden")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.5))
+                }
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {

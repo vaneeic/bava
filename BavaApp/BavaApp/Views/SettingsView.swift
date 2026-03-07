@@ -6,6 +6,8 @@ struct SettingsView: View {
     @AppStorage("conversationFontSize") private var conversationFontSize: Double = 20
     @AppStorage("tvFontSize") private var tvFontSize: Double = 32
     @AppStorage("tvMaxLines") private var tvMaxLines: Int = 3
+    @AppStorage("captionHoldTime") private var captionHoldTime: Double = 0
+    @AppStorage("subtitleBackground") private var subtitleBackground: Bool = true
 
     var body: some View {
         NavigationStack {
@@ -40,12 +42,39 @@ struct SettingsView: View {
                     Toggle(isOn: $speechService.noiseSuppression) {
                         VStack(alignment: .leading) {
                             Text("Ruisonderdrukking")
-                            Text("Filtert achtergrondgeluid (TV, ventilator)")
+                            Text("Noise gate: blokkeert stilte/achtergrondgeluid")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
                     }
                     .tint(Color("AccentColor"))
+
+                    Toggle(isOn: $speechService.highPassEnabled) {
+                        VStack(alignment: .leading) {
+                            Text("High-pass filter")
+                            Text("Filtert laag brommen/hum (TV, airco, verkeer)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .tint(Color("AccentColor"))
+
+                    if speechService.highPassEnabled {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Cutoff frequentie")
+                                Spacer()
+                                Text("\(Int(speechService.highPassFrequency)) Hz")
+                                    .foregroundColor(.secondary)
+                                    .monospacedDigit()
+                            }
+                            Slider(value: $speechService.highPassFrequency, in: 50...500, step: 10)
+                                .tint(Color("AccentColor"))
+                            Text("Hogere waarde = meer lage tonen gefilterd (50-500 Hz)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
 
                     Toggle(isOn: $speechService.forceOnDevice) {
                         VStack(alignment: .leading) {
@@ -100,7 +129,38 @@ struct SettingsView: View {
                 } footer: {
                     Text("Wijzig versterking en modus, druk dan op 'Toepassen' om opnieuw te starten met de nieuwe instellingen.")
                 }
+                // Recognition tuning
+                Section {
+                    Picker("Herkenningsmodus", selection: $speechService.taskHint) {
+                        Text("Automatisch").tag(0)
+                        Text("Dictatie").tag(1)
+                        Text("Zoeken").tag(2)
+                        Text("Bevestiging").tag(3)
+                    }
 
+                    Toggle(isOn: $speechService.addsPunctuation) {
+                        VStack(alignment: .leading) {
+                            Text("Automatische interpunctie")
+                            Text("Punten, komma's en vraagtekens toevoegen")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .tint(Color("AccentColor"))
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Contextwoorden")
+                        TextField("namen, programma's, plaatsen...", text: $speechService.customContextStrings)
+                            .textFieldStyle(.roundedBorder)
+                        Text("Kommagescheiden woorden die vaker voorkomen. Verbetert herkenning van namen en vaktermen.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                } header: {
+                    Label("Herkenning", systemImage: "text.magnifyingglass")
+                } footer: {
+                    Text("Dictatie is het beste voor ondertiteling. Contextwoorden helpen bij het herkennen van specifieke namen en termen.")
+                }
                 // Conversation settings
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
@@ -127,6 +187,31 @@ struct SettingsView: View {
                             set: { tvMaxLines = Int($0) }
                         ), in: 1...6, step: 1)
                             .tint(Color("AccentColor"))
+                    }
+
+                    Toggle(isOn: $subtitleBackground) {
+                        VStack(alignment: .leading) {
+                            Text("Ondertitel achtergrond")
+                            Text("Zwarte box achter de tekst voor betere leesbaarheid")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .tint(Color("AccentColor"))
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Ondertitels zichtbaar")
+                            Spacer()
+                            Text(captionHoldTime == 0 ? "Altijd" : "\(Int(captionHoldTime))s")
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $captionHoldTime, in: 0...30, step: 1)
+                            .tint(Color("AccentColor"))
+                        Text("0 = altijd zichtbaar, anders verdwijnen ondertitels na X seconden")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
                 } header: {
                     Label("TV Modus", systemImage: "tv")
