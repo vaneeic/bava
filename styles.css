@@ -630,6 +630,404 @@ body {
   pointer-events: none;
 }
 
+/* TV mic area with enter-immersive button */
+.tv-mic-area {
+  position: relative;
+}
+
+.btn-enter-immersive {
+  position: absolute;
+  right: 1.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.btn-enter-immersive:hover,
+.btn-enter-immersive:active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* ---------- TV Immersive Mode ---------- */
+.tv-controls {
+  display: none;
+}
+
+.btn-exit-immersive {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.7);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn-exit-immersive:hover,
+.btn-exit-immersive:active {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+/* When immersive mode is active */
+.app.tv-immersive .topbar,
+.app.tv-immersive .mode-tabs {
+  display: none !important;
+}
+
+.app.tv-immersive #view-tv {
+  display: flex !important;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  height: 100dvh !important;
+  background: #000;
+}
+
+.app.tv-immersive .tv-captions-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  max-width: none;
+  margin: 0;
+  background: #000;
+}
+
+.app.tv-immersive .tv-captions {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  padding: 0 2rem 6rem; /* extra bottom padding to stay above mic button */
+  max-height: none;
+}
+
+.app.tv-immersive .tv-captions.visible {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.app.tv-immersive .tv-captions-list {
+  gap: 0.3rem;
+}
+
+/* Only show last 3 caption lines in immersive mode */
+.app.tv-immersive .tv-captions-list .tv-caption-line {
+  display: none;
+}
+
+.app.tv-immersive .tv-captions-list .tv-caption-line:nth-last-child(-n+3) {
+  display: block;
+}
+
+/* Immersive subtitle styling */
+.app.tv-immersive .tv-caption-line {
+  font-size: calc(var(--caption-font-size) * 1.6) !important;
+  font-weight: 700;
+  color: #fff;
+  text-align: center;
+  text-shadow:
+    0 0 8px rgba(0, 0, 0, 0.9),
+    0 2px 4px rgba(0, 0, 0, 0.8),
+    0 0 20px rgba(0, 0, 0, 0.6);
+  padding: 0.2rem 1rem;
+  line-height: 1.35;
+  border-left: none !important;
+  padding-left: 0 !important;
+  animation: subtitleFadeIn 0.4s ease;
+}
+
+.app.tv-immersive .tv-caption-live {
+  font-size: calc(var(--caption-font-size) * 1.6) !important;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: center;
+  text-shadow:
+    0 0 8px rgba(0, 0, 0, 0.9),
+    0 2px 4px rgba(0, 0, 0, 0.8);
+  padding: 0.2rem 1rem;
+  line-height: 1.35;
+  border-left: none !important;
+  padding-left: 0 !important;
+  min-height: 0;
+}
+
+.app.tv-immersive .tv-caption-live:empty {
+  display: none;
+}
+
+@keyframes subtitleFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Immersive controls - floating overlay */
+.app.tv-immersive .tv-controls {
+  display: flex;
+  gap: 0.5rem;
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 200;
+  transition: opacity 0.5s ease;
+}
+
+.app.tv-immersive .tv-controls.controls-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Settings toggle button */
+.btn-tv-settings-toggle {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.7);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.app.tv-immersive .btn-tv-settings-toggle {
+  display: flex;
+}
+
+.btn-tv-settings-toggle:hover,
+.btn-tv-settings-toggle:active {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.btn-tv-settings-toggle.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* Immersive settings panel */
+.tv-settings-panel {
+  display: none;
+}
+
+.app.tv-immersive .tv-settings-panel {
+  display: block;
+  position: fixed;
+  top: 4rem;
+  right: 1rem;
+  z-index: 250;
+  background: rgba(20, 20, 20, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  padding: 1rem 1.2rem;
+  min-width: 300px;
+  max-width: 360px;
+  animation: subtitleFadeIn 0.3s ease;
+}
+
+.app.tv-immersive .tv-settings-panel.hidden {
+  display: none;
+}
+
+.tv-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.tv-settings-row:last-child {
+  border-bottom: none;
+}
+
+.tv-settings-row label {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.8);
+  white-space: nowrap;
+  min-width: 120px;
+}
+
+.tv-settings-row input[type="range"] {
+  flex: 1;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  outline: none;
+}
+
+.tv-settings-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid #fff;
+}
+
+.tv-settings-value {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.5);
+  min-width: 70px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Live volume display in settings */
+.tv-settings-volume-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.tv-settings-volume-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.1s ease, background 0.3s ease;
+}
+
+.tv-settings-volume-fill.loud {
+  background: var(--success);
+}
+
+.tv-settings-hint {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.35);
+  line-height: 1.4;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  margin-top: 0.25rem;
+}
+
+/* Immersive floating mic */
+.app.tv-immersive .tv-mic-area {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: transparent;
+  border-top: none;
+  padding: 0 1.5rem 1.5rem;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: opacity 0.5s ease;
+}
+
+.app.tv-immersive .tv-mic-area.controls-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.app.tv-immersive .btn-enter-immersive {
+  display: none;
+}
+
+.app.tv-immersive .mic-ring {
+  width: 56px;
+  height: 56px;
+}
+
+.app.tv-immersive .btn-mic {
+  width: 48px;
+  height: 48px;
+  opacity: 0.6;
+  transition: opacity 0.3s ease, transform var(--transition);
+}
+
+.app.tv-immersive .btn-mic:hover,
+.app.tv-immersive .btn-mic.active {
+  opacity: 1;
+}
+
+.app.tv-immersive .btn-mic svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* Empty state in immersive */
+.app.tv-immersive .tv-empty {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.app.tv-immersive .tv-empty .empty-icon {
+  font-size: 4rem;
+}
+
+.app.tv-immersive .tv-empty p {
+  font-size: 1.3rem;
+}
+
+/* Immersive volume strip — thin bar at very bottom of screen */
+.tv-volume-strip {
+  display: none;
+}
+
+.app.tv-immersive .tv-volume-strip {
+  display: block;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  z-index: 300;
+}
+
+.tv-volume-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.1s ease, background 0.3s ease;
+  border-radius: 0 2px 2px 0;
+}
+
+/* Glow when audio is loud */
+.tv-volume-fill.loud {
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+}
+
 /* ---------- History ---------- */
 .history-container {
   flex: 1;
@@ -961,7 +1359,7 @@ body {
   border-radius: 999px;
   font-size: 0.9rem;
   font-weight: 500;
-  z-index: 200;
+  z-index: 500;
   box-shadow: 0 4px 20px var(--shadow);
   animation: toastIn 0.3s ease;
   white-space: nowrap;
@@ -1041,6 +1439,18 @@ body {
     max-width: 800px;
     margin: 0 auto;
     width: 100%;
+  }
+
+  /* In immersive mode, use full width */
+  .app.tv-immersive .tv-captions-container {
+    max-width: none;
+    margin: 0;
+  }
+
+  .app.tv-immersive .tv-caption-line,
+  .app.tv-immersive .tv-caption-live {
+    max-width: 80%;
+    margin: 0 auto;
   }
 }
 

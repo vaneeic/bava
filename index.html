@@ -118,7 +118,7 @@
 
     <!-- ===== TV MODE ===== -->
     <section id="view-tv" class="view" role="tabpanel" aria-labelledby="tab-tv">
-      <div class="tv-captions-container">
+      <div class="tv-captions-container" id="tv-captions-container">
         <div id="tv-captions" class="tv-captions" role="log" aria-live="polite" aria-label="TV ondertiteling">
           <div id="tv-captions-list" class="tv-captions-list"></div>
           <div id="tv-caption-live" class="tv-caption-live"></div>
@@ -126,10 +126,74 @@
         <div id="tv-empty-state" class="empty-state tv-empty">
           <div class="empty-icon">📺</div>
           <p>TV modus</p>
-          <p class="empty-hint">Plaats je telefoon dicht bij de TV<br>en druk op de microfoon</p>
+          <p class="empty-hint">Plaats je apparaat dicht bij de TV<br>en druk op de microfoon</p>
         </div>
       </div>
-      <div class="mic-area">
+
+      <!-- Immersive controls overlay -->
+      <div id="tv-controls" class="tv-controls">
+        <button id="btn-tv-settings-toggle" class="btn-tv-settings-toggle" aria-label="Instellingen" title="Instellingen">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+        <button id="btn-exit-immersive" class="btn-exit-immersive" aria-label="Volledig scherm verlaten" title="Terug naar normaal">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Immersive settings panel -->
+      <div id="tv-settings-panel" class="tv-settings-panel hidden">
+        <div class="tv-settings-row">
+          <label>� Mic boost</label>
+          <input type="range" id="tv-gain-slider" min="1" max="10" step="0.5" value="1">
+          <span id="tv-gain-value" class="tv-settings-value">1.0x</span>
+        </div>
+        <div class="tv-settings-row">
+          <label>🔤 Lettergrootte</label>
+          <input type="range" id="tv-font-slider" min="16" max="64" step="2" value="24">
+          <span id="tv-font-value" class="tv-settings-value">24px</span>
+        </div>
+        <div class="tv-settings-row">
+          <label>👥 Spreker detectie</label>
+          <input type="range" id="tv-sensitivity-slider" min="0" max="100" step="5" value="15">
+          <span id="tv-sensitivity-value" class="tv-settings-value">Zeer strict</span>
+        </div>
+        <div class="tv-settings-row">
+          <label>📊 Volume</label>
+          <div id="tv-settings-volume" class="tv-settings-volume-bar">
+            <div id="tv-settings-volume-fill" class="tv-settings-volume-fill"></div>
+          </div>
+          <span id="tv-settings-volume-value" class="tv-settings-value">0%</span>
+        </div>
+        <div class="tv-settings-row">
+          <label>🔇 Echo cancel</label>
+          <span class="tv-settings-value" id="tv-echo-status">Uit (TV)</span>
+        </div>
+        <div class="tv-settings-row">
+          <label>🔊 Noise suppress</label>
+          <span class="tv-settings-value" id="tv-noise-status">Uit (TV)</span>
+        </div>
+        <div class="tv-settings-hint">
+          💡 Zet Mic boost hoger als de bron (TV/podcast) ver weg staat.
+          De boost versterkt de audio-analyse maar de spraakherkenning
+          gebruikt het ruwe mic-signaal.
+        </div>
+      </div>
+
+      <!-- Immersive volume indicator strip -->
+      <div id="tv-volume-strip" class="tv-volume-strip" role="meter" aria-label="Geluidsniveau">
+        <div id="tv-volume-fill" class="tv-volume-fill"></div>
+      </div>
+
+      <div class="mic-area tv-mic-area">
+        <button id="btn-enter-immersive" class="btn-enter-immersive" aria-label="Volledig scherm" title="Ondertitel modus">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+          </svg>
+        </button>
         <div id="tv-mic-ring" class="mic-ring">
           <button id="btn-tv-mic" class="btn-mic" aria-label="TV microfoon aan/uit" title="Start TV luisteren">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">

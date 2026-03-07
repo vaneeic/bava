@@ -69,6 +69,7 @@
       autoSave: true,
       haptic: true,
       speakerSensitivity: 15, // 0-100, lower = stricter (less speaker switches)
+      micGain: 1.0, // 1.0 = normal, up to 5.0 for boosting quiet sources
     },
   };
 
@@ -105,12 +106,32 @@
     volumeMeter: $('#volume-meter'),
     volumeBar: $('#volume-bar'),
     // TV
+    tvCaptionsContainer: $('#tv-captions-container'),
     tvCaptions: $('#tv-captions'),
     tvCaptionsList: $('#tv-captions-list'),
     tvCaptionLive: $('#tv-caption-live'),
     tvEmptyState: $('#tv-empty-state'),
     btnTvMic: $('#btn-tv-mic'),
     tvMicRing: $('#tv-mic-ring'),
+    tvControls: $('#tv-controls'),
+    tvMicArea: document.querySelector('.tv-mic-area'),
+    btnEnterImmersive: $('#btn-enter-immersive'),
+    btnExitImmersive: $('#btn-exit-immersive'),
+    tvVolumeStrip: $('#tv-volume-strip'),
+    tvVolumeFill: $('#tv-volume-fill'),
+    // TV settings panel
+    btnTvSettingsToggle: $('#btn-tv-settings-toggle'),
+    tvSettingsPanel: $('#tv-settings-panel'),
+    tvFontSlider: $('#tv-font-slider'),
+    tvFontValue: $('#tv-font-value'),
+    tvSensitivitySlider: $('#tv-sensitivity-slider'),
+    tvSensitivityValue: $('#tv-sensitivity-value'),
+    tvSettingsVolumeFill: $('#tv-settings-volume-fill'),
+    tvSettingsVolumeValue: $('#tv-settings-volume-value'),
+    tvEchoStatus: $('#tv-echo-status'),
+    tvNoiseStatus: $('#tv-noise-status'),
+    tvGainSlider: $('#tv-gain-slider'),
+    tvGainValue: $('#tv-gain-value'),
     // History
     historyList: $('#history-list'),
     historyEmpty: $('#history-empty'),
@@ -220,6 +241,56 @@
     // History
     els.btnClearHistory.addEventListener('click', clearHistory);
 
+    // Immersive mode
+    if (els.btnEnterImmersive) {
+      els.btnEnterImmersive.addEventListener('click', enterTVImmersive);
+    }
+    if (els.btnExitImmersive) {
+      els.btnExitImmersive.addEventListener('click', exitTVImmersive);
+    }
+
+    // TV settings panel
+    if (els.btnTvSettingsToggle) {
+      els.btnTvSettingsToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleTVSettings();
+      });
+    }
+    if (els.tvFontSlider) {
+      els.tvFontSlider.addEventListener('input', (e) => {
+        state.settings.fontSize = parseInt(e.target.value);
+        els.tvFontValue.textContent = e.target.value + 'px';
+        // Sync main slider too
+        els.fontSlider.value = e.target.value;
+        els.fontSizeValue.textContent = e.target.value;
+        applyFontSize();
+        saveSettings();
+      });
+    }
+    if (els.tvSensitivitySlider) {
+      els.tvSensitivitySlider.addEventListener('input', (e) => {
+        state.settings.speakerSensitivity = parseInt(e.target.value);
+        const label = getSensitivityLabel(state.settings.speakerSensitivity);
+        els.tvSensitivityValue.textContent = label;
+        // Sync main slider too
+        els.sensitivitySlider.value = e.target.value;
+        els.sensitivityValue.textContent = label;
+        saveSettings();
+      });
+    }
+    if (els.tvGainSlider) {
+      els.tvGainSlider.addEventListener('input', (e) => {
+        const gain = parseFloat(e.target.value);
+        state.settings.micGain = gain;
+        els.tvGainValue.textContent = gain.toFixed(1) + 'x';
+        // Apply gain immediately if audio is active
+        if (state.gainNode) {
+          state.gainNode.gain.value = gain;
+        }
+        saveSettings();
+      });
+    }
+
     // Saved speakers
     if (els.btnClearSpeakers) {
       els.btnClearSpeakers.addEventListener('click', () => {
@@ -267,6 +338,7 @@
       if (!state.sessionStartTime) {
         state.sessionStartTime = new Date();
       }
+      console.log('[Bava] Speech recognition started');
     };
 
     recognition.onresult = (event) => {
@@ -276,7 +348,7 @@
     };
 
     recognition.onerror = (event) => {
-      console.warn('Speech error:', event.error);
+      console.warn('[Bava] Speech error:', event.error);
       
       if (event.error === 'not-allowed') {
         showToast('🎙️ Microfoon toegang geweigerd — controleer je instellingen');
@@ -285,12 +357,21 @@
       }
 
       if (event.error === 'no-speech') {
-        // Silence — just restart
+        // Silence — just restart, but show feedback in TV mode
+        if (state.currentMode === 'tv') {
+          console.log('[Bava] No speech detected — waiting...');
+        }
         return;
       }
 
       if (event.error === 'network') {
-        showToast('📶 Geen internetverbinding');
+        showToast('📶 Geen internetverbinding — spraakherkenning vereist internet');
+      }
+
+      if (event.error === 'audio-capture') {
+        showToast('🎙️ Kan audio niet opnemen — controleer je microfoon');
+        stopListening();
+        return;
       }
 
       if (event.error === 'aborted') {
@@ -818,13 +899,15 @@
   async function startListening() {
     // Request microphone access
     try {
+      const isTvMode = state.currentMode === 'tv';
       state.mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: state.currentMode !== 'tv',
-          noiseSuppression: state.currentMode !== 'tv',
+          echoCancellation: !isTvMode,
+          noiseSuppression: !isTvMode,
           autoGainControl: true,
           channelCount: 1,
-          sampleRate: 16000,
+          // Don't constrain sampleRate — let the browser/OS choose optimal rate
+          // Forcing 16kHz can cause failures or poor quality on some devices
         }
       });
     } catch (err) {
@@ -849,6 +932,11 @@
       resetSpeakerState();
       requestWakeLock();
       showToast('🎙️ Luisteren...');
+
+      // Auto-enter immersive mode in TV mode
+      if (state.currentMode === 'tv') {
+        enterTVImmersive();
+      }
     } catch (e) {
       console.error('Failed to start recognition:', e);
       showToast('⚠️ Kon spraakherkenning niet starten');
@@ -881,6 +969,11 @@
     hideLiveText();
     releaseWakeLock();
 
+    // Exit immersive mode if active
+    if (els.app.classList.contains('tv-immersive')) {
+      exitTVImmersive();
+    }
+
     // Save final speaker profile state
     const currentFingerprint = buildFingerprint(state.voiceSampleBuffer);
     updateSpeakerProfile(state.currentSpeakerId, currentFingerprint);
@@ -909,17 +1002,22 @@
       state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
       const source = state.audioContext.createMediaStreamSource(state.mediaStream);
 
+      // Gain node for boosting quiet audio (e.g. TV/podcast from speaker)
+      state.gainNode = state.audioContext.createGain();
+      state.gainNode.gain.value = state.settings.micGain || 1.0;
+      source.connect(state.gainNode);
+
       // Analyser for volume meter + spectral centroid
       state.analyser = state.audioContext.createAnalyser();
       state.analyser.fftSize = 256;
-      state.analyser.smoothingTimeConstant = 0.8;
-      source.connect(state.analyser);
+      state.analyser.smoothingTimeConstant = 0.7;
+      state.gainNode.connect(state.analyser);
 
       // Dedicated analyser for pitch detection (needs larger fftSize)
       state.pitchAnalyser = state.audioContext.createAnalyser();
       state.pitchAnalyser.fftSize = 2048;
       state.pitchAnalyser.smoothingTimeConstant = 0.3;
-      source.connect(state.pitchAnalyser);
+      state.gainNode.connect(state.pitchAnalyser);
 
       // Start voice sampling for speaker fingerprinting
       startVoiceSampling();
@@ -936,11 +1034,31 @@
     const dataArray = new Uint8Array(state.analyser.frequencyBinCount);
     state.analyser.getByteFrequencyData(dataArray);
 
-    // Calculate average volume
-    const avg = dataArray.reduce((sum, val) => sum + val, 0) / dataArray.length;
-    const volume = Math.min(100, Math.round((avg / 128) * 100));
+    // Calculate RMS volume (more sensitive than simple average)
+    let sumSquares = 0;
+    for (let i = 0; i < dataArray.length; i++) {
+      const normalized = dataArray[i] / 255;
+      sumSquares += normalized * normalized;
+    }
+    const rms = Math.sqrt(sumSquares / dataArray.length);
+    const volume = Math.min(100, Math.round(rms * 200)); // scale up for visibility
 
     els.volumeBar.style.width = volume + '%';
+
+    // Also update immersive volume strip
+    if (els.tvVolumeFill && els.app.classList.contains('tv-immersive')) {
+      els.tvVolumeFill.style.width = volume + '%';
+      els.tvVolumeFill.classList.toggle('loud', volume > 40);
+
+      // Update settings panel volume display
+      if (els.tvSettingsVolumeFill) {
+        els.tvSettingsVolumeFill.style.width = volume + '%';
+        els.tvSettingsVolumeFill.classList.toggle('loud', volume > 40);
+      }
+      if (els.tvSettingsVolumeValue) {
+        els.tvSettingsVolumeValue.textContent = volume + '%';
+      }
+    }
 
     state.volumeAnimFrame = requestAnimationFrame(updateVolumeMeter);
   }
@@ -960,6 +1078,7 @@
       state.audioContext = null;
       state.analyser = null;
       state.pitchAnalyser = null;
+      state.gainNode = null;
     }
   }
 
@@ -1111,12 +1230,14 @@
     els.tvCaptions.classList.add('visible');
     els.tvEmptyState.classList.add('has-content');
 
+    const isImmersive = els.app.classList.contains('tv-immersive');
+
     if (isFinal) {
       // Add a new permanent caption line
       const line = document.createElement('div');
       line.className = 'tv-caption-line';
       line.textContent = text;
-      if (speakerColor) {
+      if (!isImmersive && speakerColor) {
         line.style.borderLeft = `4px solid ${speakerColor.hex}`;
         line.style.paddingLeft = '0.8rem';
         line.style.textAlign = 'left';
@@ -1133,7 +1254,7 @@
     } else {
       // Show interim text in the live area
       els.tvCaptionLive.textContent = text;
-      if (speakerColor) {
+      if (!isImmersive && speakerColor) {
         els.tvCaptionLive.style.borderLeft = `4px solid ${speakerColor.hex}`;
         els.tvCaptionLive.style.paddingLeft = '0.8rem';
         els.tvCaptionLive.style.textAlign = 'left';
@@ -1143,6 +1264,131 @@
     // Auto-scroll to bottom if enabled
     if (tvAutoScroll) {
       tvScrollToBottom();
+    }
+  }
+
+  // ==========================================
+  // TV IMMERSIVE MODE
+  // ==========================================
+  let immersiveControlsTimer = null;
+
+  function enterTVImmersive() {
+    els.app.classList.add('tv-immersive');
+    
+    // Ensure TV mode is active
+    if (state.currentMode !== 'tv') {
+      switchMode('tv');
+    }
+
+    // Sync TV settings sliders with current values
+    syncTVSettings();
+
+    // Show controls initially, then auto-hide
+    showImmersiveControls();
+
+    // Listen for taps/mouse to show controls
+    document.addEventListener('mousemove', onImmersiveInteraction);
+    document.addEventListener('touchstart', onImmersiveInteraction);
+    document.addEventListener('click', onImmersiveInteraction);
+
+    // Keyboard: Escape to exit immersive
+    document.addEventListener('keydown', onImmersiveKeydown);
+  }
+
+  function exitTVImmersive() {
+    els.app.classList.remove('tv-immersive');
+    clearTimeout(immersiveControlsTimer);
+
+    // Hide settings panel
+    if (els.tvSettingsPanel) els.tvSettingsPanel.classList.add('hidden');
+    if (els.btnTvSettingsToggle) els.btnTvSettingsToggle.classList.remove('active');
+
+    // Remove immersive listeners
+    document.removeEventListener('mousemove', onImmersiveInteraction);
+    document.removeEventListener('touchstart', onImmersiveInteraction);
+    document.removeEventListener('click', onImmersiveInteraction);
+    document.removeEventListener('keydown', onImmersiveKeydown);
+
+    // Restore controls visibility
+    if (els.tvControls) els.tvControls.classList.remove('controls-hidden');
+    if (els.tvMicArea) els.tvMicArea.classList.remove('controls-hidden');
+
+    // Clear inline styles from non-immersive caption overrides
+    els.tvCaptionLive.style.borderLeft = '';
+    els.tvCaptionLive.style.paddingLeft = '';
+    els.tvCaptionLive.style.textAlign = '';
+  }
+
+  function showImmersiveControls() {
+    if (els.tvControls) els.tvControls.classList.remove('controls-hidden');
+    if (els.tvMicArea) els.tvMicArea.classList.remove('controls-hidden');
+
+    clearTimeout(immersiveControlsTimer);
+    // Don't auto-hide if settings panel is open
+    const settingsOpen = els.tvSettingsPanel && !els.tvSettingsPanel.classList.contains('hidden');
+    if (!settingsOpen) {
+      immersiveControlsTimer = setTimeout(hideImmersiveControls, 3000);
+    }
+  }
+
+  function hideImmersiveControls() {
+    if (!els.app.classList.contains('tv-immersive')) return;
+    // Don't hide if settings panel is open
+    const settingsOpen = els.tvSettingsPanel && !els.tvSettingsPanel.classList.contains('hidden');
+    if (settingsOpen) return;
+    if (els.tvControls) els.tvControls.classList.add('controls-hidden');
+    if (els.tvMicArea) els.tvMicArea.classList.add('controls-hidden');
+  }
+
+  function onImmersiveInteraction(e) {
+    if (els.app.classList.contains('tv-immersive')) {
+      // Don't reset auto-hide timer when interacting with settings panel
+      if (els.tvSettingsPanel && els.tvSettingsPanel.contains(e.target)) return;
+      if (els.btnTvSettingsToggle && els.btnTvSettingsToggle.contains(e.target)) return;
+      showImmersiveControls();
+    }
+  }
+
+  function onImmersiveKeydown(e) {
+    if (e.key === 'Escape') {
+      exitTVImmersive();
+    }
+  }
+
+  function toggleTVSettings() {
+    if (!els.tvSettingsPanel) return;
+    const isHidden = els.tvSettingsPanel.classList.contains('hidden');
+    els.tvSettingsPanel.classList.toggle('hidden');
+    els.btnTvSettingsToggle.classList.toggle('active', isHidden);
+
+    if (isHidden) {
+      // Panel just opened — keep controls visible
+      clearTimeout(immersiveControlsTimer);
+      syncTVSettings();
+    } else {
+      // Panel closed — restart auto-hide
+      showImmersiveControls();
+    }
+  }
+
+  function syncTVSettings() {
+    if (els.tvFontSlider) {
+      els.tvFontSlider.value = state.settings.fontSize;
+      els.tvFontValue.textContent = state.settings.fontSize + 'px';
+    }
+    if (els.tvSensitivitySlider) {
+      els.tvSensitivitySlider.value = state.settings.speakerSensitivity;
+      els.tvSensitivityValue.textContent = getSensitivityLabel(state.settings.speakerSensitivity);
+    }
+    if (els.tvGainSlider) {
+      els.tvGainSlider.value = state.settings.micGain || 1.0;
+      els.tvGainValue.textContent = (state.settings.micGain || 1.0).toFixed(1) + 'x';
+    }
+    if (els.tvEchoStatus) {
+      els.tvEchoStatus.textContent = state.currentMode === 'tv' ? 'Uit (TV)' : 'Aan';
+    }
+    if (els.tvNoiseStatus) {
+      els.tvNoiseStatus.textContent = state.currentMode === 'tv' ? 'Uit (TV)' : 'Aan';
     }
   }
 
