@@ -20,5 +20,15 @@
 	<string>1</string>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Bava heeft toegang tot je microfoon nodig om spraak om te zetten naar ondertitels.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Bava gebruikt spraakherkenning om live Nederlandse ondertitels te genereren.</string>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
 </dict>
 </plist>

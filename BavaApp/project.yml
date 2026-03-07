@@ -30,3 +30,9 @@ targets:
       path: BavaApp/Info.plist
       properties:
         UILaunchScreen: {}
+        NSMicrophoneUsageDescription: "Bava heeft toegang tot je microfoon nodig om spraak om te zetten naar ondertitels."
+        NSSpeechRecognitionUsageDescription: "Bava gebruikt spraakherkenning om live Nederlandse ondertitels te genereren."
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
