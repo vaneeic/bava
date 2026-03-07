@@ -1,10 +1,10 @@
-# Bava 👂🇳🇱
+`# Bava 👂🇳🇱
 
 **Live ondertiteling app — speciaal voor dove en slechthorende gebruikers, geoptimaliseerd voor Nederlands.**
 
 ## Gebruiken
 
-Open op je iPhone: **https://vaneeic.github.io/bava**
+Open op je iPhone: **https://icvanee.github.io/bava**
 
 Voeg toe aan je thuisscherm: Safari → Deel-knop → "Zet op beginscherm"
 
