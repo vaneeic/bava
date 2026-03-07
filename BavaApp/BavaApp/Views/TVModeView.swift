@@ -11,19 +11,19 @@ struct TVModeView: View {
     @State private var controlsTimer: Timer?
     @State private var isImmersive = false
 
-    // Show last N captions + current interim text
+    // Show last N captions + current interim text with STABLE IDs
     private var displayLines: [DisplayLine] {
         var lines: [DisplayLine] = []
 
-        // Add last finalized captions
-        let recent = speechService.captions.suffix(maxLines)
+        // Add last finalized captions — use caption.id for stable identity
+        let recent = Array(speechService.captions.suffix(maxLines))
         for caption in recent {
-            lines.append(DisplayLine(text: caption.text, isFinal: true))
+            lines.append(DisplayLine(id: caption.id.uuidString, text: caption.text, isFinal: true))
         }
 
-        // Add current interim text
+        // Add current interim text — fixed ID so it doesn't flicker
         if !speechService.currentText.isEmpty {
-            lines.append(DisplayLine(text: speechService.currentText, isFinal: false))
+            lines.append(DisplayLine(id: "interim", text: speechService.currentText, isFinal: false))
         }
 
         // Keep only last maxLines
@@ -55,7 +55,7 @@ struct TVModeView: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, isImmersive ? 40 : 100)
-                .animation(.easeInOut(duration: 0.3), value: displayLines.count)
+                .animation(.easeInOut(duration: 0.3), value: displayLines)
             }
 
             // Volume indicator strip at very bottom
@@ -271,8 +271,8 @@ struct TVModeView: View {
 
 // MARK: - Display Line Model
 
-private struct DisplayLine: Identifiable {
-    let id = UUID()
+private struct DisplayLine: Identifiable, Equatable {
+    let id: String     // Stable ID from caption.id or "interim"
     let text: String
     let isFinal: Bool
 }

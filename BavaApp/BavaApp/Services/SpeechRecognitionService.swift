@@ -6,6 +6,9 @@ import Combine
 
 /// Speech recognition service using Apple's SFSpeechRecognizer.
 /// Supports on-device recognition for Dutch (nl-NL).
+///
+/// Audio operations run on a dedicated serial queue to avoid
+/// threading conflicts with AVAudioEngine / AVAudioSession.
 @MainActor
 final class SpeechRecognitionService: ObservableObject {
 
@@ -24,9 +27,14 @@ final class SpeechRecognitionService: ObservableObject {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private let audioEngine = AVAudioEngine()
-    private var levelTimer: Timer?
     private var silenceTimer: Timer?
     private var sessionStartTime: Date?
+
+    /// Dedicated serial queue for all audio operations
+    private let audioQueue = DispatchQueue(label: "com.icvanee.bava.audio", qos: .userInteractive)
+
+    /// Latest RMS level from the audio tap (written on audio thread, read on main)
+    private let _currentLevel = CurrentLevel()
 
     /// Silence timeout (seconds) before auto-stopping
     var silenceTimeout: TimeInterval = 120 // 2 minutes for TV mode
@@ -37,33 +45,44 @@ final class SpeechRecognitionService: ObservableObject {
         speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "nl-NL"))
     }
 
-    // MARK: - Authorization
+    // MARK: - Authorization (sequential)
 
     func requestAuthorization() {
-        SFSpeechRecognizer.requestAuthorization { [weak self] status in
-            Task { @MainActor in
-                guard let self else { return }
-                switch status {
-                case .authorized:
-                    self.isAuthorized = true
-                case .denied:
-                    self.errorMessage = "Spraakherkenning is geweigerd. Ga naar Instellingen → Privacy → Spraakherkenning."
-                case .restricted:
-                    self.errorMessage = "Spraakherkenning is beperkt op dit apparaat."
-                case .notDetermined:
-                    self.errorMessage = "Spraakherkenning status onbekend."
-                @unknown default:
-                    break
+        Task {
+            // 1. Request speech recognition permission first
+            let speechStatus = await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { status in
+                    continuation.resume(returning: status)
                 }
             }
-        }
 
-        // Also request microphone permission
-        AVAudioApplication.requestRecordPermission { [weak self] granted in
-            Task { @MainActor in
-                if !granted {
-                    self?.errorMessage = "Microfoontoegang is nodig. Ga naar Instellingen → Privacy → Microfoon."
+            switch speechStatus {
+            case .authorized:
+                break
+            case .denied:
+                self.errorMessage = "Spraakherkenning is geweigerd. Ga naar Instellingen → Privacy → Spraakherkenning."
+                return
+            case .restricted:
+                self.errorMessage = "Spraakherkenning is beperkt op dit apparaat."
+                return
+            case .notDetermined:
+                self.errorMessage = "Spraakherkenning status onbekend."
+                return
+            @unknown default:
+                return
+            }
+
+            // 2. Then request microphone permission
+            let micGranted = await withCheckedContinuation { continuation in
+                AVAudioApplication.requestRecordPermission { granted in
+                    continuation.resume(returning: granted)
                 }
+            }
+
+            if micGranted {
+                self.isAuthorized = true
+            } else {
+                self.errorMessage = "Microfoontoegang is nodig. Ga naar Instellingen → Privacy → Microfoon."
             }
         }
     }
@@ -76,111 +95,146 @@ final class SpeechRecognitionService: ObservableObject {
             return
         }
 
+        guard isAuthorized else {
+            errorMessage = "Geef eerst toestemming voor microfoon en spraakherkenning."
+            requestAuthorization()
+            return
+        }
+
         // Stop any existing session
-        stopListening()
+        stopListeningInternal()
 
         sessionStartTime = Date()
         errorMessage = nil
 
-        do {
-            try startAudioSession()
-            try startRecognition(speechRecognizer: speechRecognizer)
-            startLevelMetering()
-            isListening = true
-        } catch {
-            errorMessage = "Kon audio niet starten: \(error.localizedDescription)"
-            stopListening()
+        // Start audio on the dedicated queue
+        let engine = audioEngine
+        let recognizer = speechRecognizer
+
+        audioQueue.async { [weak self] in
+            guard let self else { return }
+
+            do {
+                // Configure audio session
+                let audioSession = AVAudioSession.sharedInstance()
+                try audioSession.setCategory(.record, mode: .measurement, options: [.duckOthers])
+                try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+
+                // Create recognition request
+                let request = SFSpeechAudioBufferRecognitionRequest()
+                if recognizer.supportsOnDeviceRecognition {
+                    request.requiresOnDeviceRecognition = true
+                }
+                request.shouldReportPartialResults = true
+                request.addsPunctuation = true
+                request.contextualStrings = [
+                    "ondertiteling", "ondertitels", "televisie",
+                    "volume", "microfoon", "spreker"
+                ]
+
+                // Install audio tap — runs on audio render thread
+                let inputNode = engine.inputNode
+                let recordingFormat = inputNode.outputFormat(forBus: 0)
+                let levelRef = self._currentLevel
+
+                inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
+                    request.append(buffer)
+
+                    // Calculate RMS for volume meter
+                    guard let channelData = buffer.floatChannelData?[0] else { return }
+                    let frameLength = Int(buffer.frameLength)
+                    var sum: Float = 0
+                    for i in 0..<frameLength {
+                        let sample = channelData[i]
+                        sum += sample * sample
+                    }
+                    let rms = sqrt(sum / Float(max(1, frameLength)))
+                    let normalized = min(1.0, rms * 5.0) // boost for visibility
+                    levelRef.value = normalized
+                }
+
+                engine.prepare()
+                try engine.start()
+
+                // Start recognition task — callback comes on arbitrary thread
+                let task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+                    guard let self else { return }
+                    self.handleRecognitionCallback(result: result, error: error)
+                }
+
+                // Update state on main thread
+                DispatchQueue.main.async {
+                    self.recognitionRequest = request
+                    self.recognitionTask = task
+                    self.isListening = true
+                    self.startLevelPolling()
+                }
+
+            } catch {
+                DispatchQueue.main.async {
+                    self.errorMessage = "Kon audio niet starten: \(error.localizedDescription)"
+                    self.stopListeningInternal()
+                }
+            }
         }
     }
 
     func stopListening() {
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
+        stopListeningInternal()
+    }
+
+    private func stopListeningInternal() {
+        let engine = audioEngine
+
+        // Stop audio on the audio queue to avoid threading issues
+        audioQueue.async {
+            engine.stop()
+            engine.inputNode.removeTap(onBus: 0)
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+
         recognitionRequest?.endAudio()
         recognitionRequest = nil
         recognitionTask?.cancel()
         recognitionTask = nil
-        levelTimer?.invalidate()
-        levelTimer = nil
         silenceTimer?.invalidate()
         silenceTimer = nil
         isListening = false
         currentText = ""
         audioLevel = 0
-
-        // Deactivate audio session
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
-    // MARK: - Audio Session
+    // MARK: - Recognition Callback (called on arbitrary thread)
 
-    private func startAudioSession() throws {
-        let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.record, mode: .measurement, options: [])
-        try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-    }
+    private nonisolated func handleRecognitionCallback(result: SFSpeechRecognitionResult?, error: Error?) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
 
-    // MARK: - Recognition
+            if let result {
+                self.handleResult(result)
+                self.resetSilenceTimer()
+            }
 
-    private func startRecognition(speechRecognizer: SFSpeechRecognizer) throws {
-        let request = SFSpeechAudioBufferRecognitionRequest()
-
-        // Prefer on-device recognition (no internet needed, better privacy)
-        if speechRecognizer.supportsOnDeviceRecognition {
-            request.requiresOnDeviceRecognition = true
-        }
-
-        request.shouldReportPartialResults = true
-        request.addsPunctuation = true // iOS 16+: auto punctuation
-
-        // Contextual strings to help recognition
-        request.contextualStrings = [
-            "ondertiteling", "ondertitels", "televisie",
-            "volume", "microfoon", "spreker"
-        ]
-
-        self.recognitionRequest = request
-
-        // Install audio tap
-        let inputNode = audioEngine.inputNode
-        let recordingFormat = inputNode.outputFormat(forBus: 0)
-
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
-            self?.recognitionRequest?.append(buffer)
-        }
-
-        audioEngine.prepare()
-        try audioEngine.start()
-
-        // Start recognition task
-        recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
-            Task { @MainActor in
-                guard let self else { return }
-
-                if let result {
-                    self.handleResult(result)
-                    self.resetSilenceTimer()
-                }
-
-                if let error {
-                    // Don't treat cancellation as an error
-                    let nsError = error as NSError
-                    if nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 216 {
-                        // "Request was canceled" — normal when stopping
-                        return
-                    }
-
-                    if self.isListening {
-                        print("[Bava] Recognition error: \(error.localizedDescription)")
-                        // Try to restart
+            if let error {
+                let nsError = error as NSError
+                // Code 216 = "Request was canceled" — normal when stopping
+                // Code 1110 = "No speech detected"
+                if nsError.domain == "kAFAssistantErrorDomain" &&
+                    (nsError.code == 216 || nsError.code == 1110) {
+                    if nsError.code == 1110 && self.isListening {
                         self.restartListening()
                     }
+                    return
                 }
 
-                if result?.isFinal == true && self.isListening {
-                    // Recognition ended naturally — restart for continuous listening
+                if self.isListening {
+                    print("[Bava] Recognition error: \(error.localizedDescription)")
                     self.restartListening()
                 }
+            }
+
+            if result?.isFinal == true && self.isListening {
+                self.restartListening()
             }
         }
     }
@@ -190,7 +244,6 @@ final class SpeechRecognitionService: ObservableObject {
         let text = bestTranscription.formattedString
 
         if result.isFinal {
-            // Final result — add as caption
             let confidence = bestTranscription.segments.reduce(0.0) { $0 + $1.confidence }
                 / Float(max(1, bestTranscription.segments.count))
 
@@ -206,7 +259,6 @@ final class SpeechRecognitionService: ObservableObject {
             let generator = UIImpactFeedbackGenerator(style: .light)
             generator.impactOccurred()
         } else {
-            // Interim result — update live text
             currentText = text
         }
     }
@@ -217,53 +269,46 @@ final class SpeechRecognitionService: ObservableObject {
         guard isListening else { return }
         guard let speechRecognizer, speechRecognizer.isAvailable else { return }
 
-        // Clean up current session
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
+        let engine = audioEngine
+
+        // Clean up on audio queue
+        audioQueue.async { [weak self] in
+            engine.stop()
+            engine.inputNode.removeTap(onBus: 0)
+        }
+
         recognitionRequest?.endAudio()
         recognitionRequest = nil
         recognitionTask?.cancel()
         recognitionTask = nil
 
         // Restart after a brief delay
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
-            guard self.isListening else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let self, self.isListening else { return }
 
-            do {
-                try self.startAudioSession()
-                try self.startRecognition(speechRecognizer: speechRecognizer)
-            } catch {
-                print("[Bava] Restart failed: \(error)")
-                self.errorMessage = "Herstart mislukt. Probeer opnieuw."
-                self.isListening = false
-            }
+            // Re-trigger startListening (which runs audio setup on audioQueue)
+            self.isListening = false // allow startListening to proceed
+            self.startListening()
         }
     }
 
-    // MARK: - Level Metering
+    // MARK: - Level Polling
 
-    private func startLevelMetering() {
-        levelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+    private func startLevelPolling() {
+        // Use a display-link style timer to poll the audio level
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+
             Task { @MainActor in
-                self?.updateAudioLevel()
+                guard self.isListening else {
+                    timer.invalidate()
+                    self.audioLevel = 0
+                    return
+                }
+                self.audioLevel = self._currentLevel.value
             }
         }
-    }
-
-    private func updateAudioLevel() {
-        guard audioEngine.isRunning else {
-            audioLevel = 0
-            return
-        }
-
-        let inputNode = audioEngine.inputNode
-        let channelData = inputNode.outputFormat(forBus: 0)
-
-        // Use the audio engine's input node to read levels
-        // We calculate RMS from the tap buffer instead
-        // For now, use a simple approach via installTap data
-        // The actual level is computed in the tap callback
     }
 
     // MARK: - Silence Detection
@@ -293,5 +338,18 @@ final class SpeechRecognitionService: ObservableObject {
         captions.removeAll()
         currentText = ""
         sessionStartTime = nil
+    }
+}
+
+// MARK: - Thread-safe audio level container
+
+/// Simple thread-safe container for passing audio level between threads.
+private final class CurrentLevel: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: Float = 0
+
+    var value: Float {
+        get { lock.withLock { _value } }
+        set { lock.withLock { _value = newValue } }
     }
 }
